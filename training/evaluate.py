@@ -1,0 +1,104 @@
+"""Measure how well a model clicks the right thing, before and after fine-tuning.
+
+For every example in a split from build_dataset.py the model answers once, and we check:
+- grounding examples: is the click inside the target element's box?
+- action examples:    is the action type right, and for clicks/drags is the point inside the box?
+Reports accuracy per task, plus answers that could not be parsed.
+
+    python training/evaluate.py --data data/sft --split val --model ByteDance-Seed/UI-TARS-1.5-7B
+    python training/evaluate.py --data data/sft --split val --adapter runs/uitars-leanwatch
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+import leanwatch_paths  # noqa: F401
+from leanwatch.actions import ParseError, parse_response
+
+ACTION_NAME = {"click": {"click", "left_single", "left_double"}, "drag": {"drag"}, "type": {"type"},
+               "hotkey": {"hotkey", "press"}, "confirm": {"ask_user", "call_user"}, "finished": {"finished"},
+               "scroll": {"scroll"}}
+
+
+def score(example: dict, answer_text: str, model_w: int, model_h: int, coords: str) -> dict:
+    meta = example["meta"]
+    out = {"task": example["task"], "parsed": False, "type_ok": False, "point_ok": None}
+    try:
+        parsed = parse_response(answer_text)
+    except ParseError:
+        return out
+    out["parsed"] = True
+    a = parsed.actions[0]
+    want = "click" if example["task"] == "grounding" else meta["action"]
+    out["type_ok"] = a.name in ACTION_NAME.get(want, {want})
+    if "bbox" in meta and a.point is not None:
+        sx, sy = (meta["width"] / 1000, meta["height"] / 1000) if coords == "rel1000" else (meta["width"] / model_w, meta["height"] / model_h)
+        x, y = a.point[0] * sx, a.point[1] * sy
+        x0, y0, x1, y1 = meta["bbox"]
+        out["point_ok"] = bool(x0 <= x <= x1 and y0 <= y <= y1)
+    elif "bbox" in meta:
+        out["point_ok"] = False
+    return out
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--data", type=Path, required=True)
+    p.add_argument("--split", default="val")
+    p.add_argument("--model", default=None, help="Hugging Face id or folder (default: the adapter's base, else UI-TARS-1.5-7B)")
+    p.add_argument("--adapter", default=None)
+    p.add_argument("--tasks", default="actions,grounding")
+    p.add_argument("--limit", type=int, default=0, help="evaluate at most this many examples (0 = all)")
+    p.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
+    p.add_argument("--4bit", dest="four_bit", action="store_true")
+    p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--save", type=Path, help="write per-example results as JSONL")
+    a = p.parse_args(argv)
+
+    from PIL import Image
+
+    from leanwatch.brains import resolve_model_id
+    from leanwatch.local_brain import LocalModel
+
+    meta = json.loads((a.data / "meta.json").read_text())
+    model_id = resolve_model_id(a.model, a.adapter)
+    model = LocalModel(model_id, adapter=a.adapter, device=a.device, load_in_4bit=a.four_bit,
+                       max_pixels=meta["max_pixels"], max_new_tokens=a.max_new_tokens)
+    tasks = set(a.tasks.split(","))
+    rows = [json.loads(line) for line in open(a.data / f"{a.split}.jsonl")]
+    rows = [r for r in rows if r["task"] in tasks]
+    if a.limit:
+        rows = rows[: a.limit]
+
+    results, save = [], open(a.save, "w") if a.save else None
+    for i, ex in enumerate(rows, 1):
+        images = [Image.open(path).convert("RGB") for path in ex["images"]]
+        ans = model.answer(ex["prompt"], images)
+        r = score(ex, ans.text, ans.image_w, ans.image_h, meta["coords"])
+        results.append(r)
+        if save:
+            save.write(json.dumps({**r, "answer": ans.text, "target": ex["completion"][0]["content"][0]["text"], "meta": ex["meta"]}) + "\n")
+        if i % 20 == 0:
+            print(f"{i}/{len(rows)}")
+    if save:
+        save.close()
+
+    print(f"\nModel: {model_id}{' + ' + a.adapter if a.adapter else ''}   split: {a.split}   examples: {len(results)}")
+    for task in sorted(tasks):
+        rs = [r for r in results if r["task"] == task]
+        if not rs:
+            continue
+        pts = [r["point_ok"] for r in rs if r["point_ok"] is not None]
+        print(f"  {task:10s} parsed {sum(r['parsed'] for r in rs) / len(rs):6.1%}   right action {sum(r['type_ok'] for r in rs) / len(rs):6.1%}"
+              + (f"   click inside target {sum(pts) / len(pts):6.1%} (of {len(pts)})" if pts else ""))
+    by_action = Counter(ex["meta"].get("action", "click") for ex in rows)
+    print(f"  action mix: {dict(by_action)}")
+    return results
+
+
+if __name__ == "__main__":
+    main()

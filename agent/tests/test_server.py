@@ -73,7 +73,7 @@ def test_websocket_checks_origin_and_token():
             await client.ws_connect(f"/ws?token={TOKEN}", headers={**HOST, "Origin": "https://evil.example"})
         ws = await client.ws_connect(f"/ws?token={TOKEN}", headers={**HOST, "Origin": ORIGIN})
         first = await ws.receive_json(timeout=5)
-        assert first["type"] == "status" and first["model"] == "claude-opus-5-5"
+        assert first["type"] == "status" and first["brain"] == "local" and first["api_ready"] is True
         await ws.send_json({"type": "grant", "scopes": {"mouse": True, "keyboard": True}})
         msg = await ws.receive_json(timeout=5)
         assert msg["type"] == "status" and msg["permission"]["granted"] is True

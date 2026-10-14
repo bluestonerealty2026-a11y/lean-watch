@@ -24,7 +24,8 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-from .brain import Brain, Hooks, RunResult
+from .brains import load_local_model, make_brain, model_name
+from .hooks import Hooks, RunResult
 from .config import Config
 from .controller import Controller, DryRunBackend, PyAutoGuiBackend
 from .permissions import Permissions
@@ -33,7 +34,10 @@ from .screen import Geometry, ScreenCapture, jpeg_data_url
 MAX_TASK_CHARS = 2000
 
 
-def api_hint() -> tuple[bool, str]:
+def api_hint(cfg: Config | None = None) -> tuple[bool, str]:
+    """Whether the chosen brain can run. The local brain needs no key."""
+    if cfg is None or cfg.brain != "claude":
+        return True, ""
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         return True, ""
     if (Path.home() / ".config" / "anthropic").exists():
@@ -59,6 +63,7 @@ class Session(Hooks):
         self.pending: dict[str, dict] = {}
         self.last_narration = ""
         self.controller: Controller | None = None
+        self.local_model = None  # loaded on the first task, then kept
         self.screen_size, self.screen_error = self._probe_screen()
 
     # ---------------- setup ----------------
@@ -76,11 +81,12 @@ class Session(Hooks):
 
     # ---------------- messaging ----------------
     def status(self) -> dict:
-        ready, hint = api_hint()
+        ready, hint = api_hint(self.cfg)
         w_h = self.screen_size
         return {
             "type": "status",
-            "model": self.cfg.model,
+            "brain": self.cfg.brain,
+            "model": model_name(self.cfg),
             "effort": self.cfg.effort,
             "dry_run": self.cfg.dry_run,
             "permission": self.permissions.as_dict(),
@@ -175,7 +181,11 @@ class Session(Hooks):
                 confirm=self.confirm, stop=self.stop_event,
             )
             self.preview()
-            result = Brain(self.cfg, self.controller, self, self.stop_event).run(text)
+            if self.cfg.brain == "local" and self.local_model is None:
+                self.narrate(f"Loading {self.cfg.local_model}. The first time this downloads several GB and can take a few minutes.", "thinking")
+                self.local_model = load_local_model(self.cfg)
+            brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=self.local_model)
+            result = brain.run(text)
         except Exception as err:
             result = RunResult(False, f"Could not run the task: {err}")
         finally:
@@ -346,10 +356,11 @@ def serve(cfg: Config, overlay: bool = False) -> None:
 
     print("LeanWatch local agent")
     print(f"  Control center: {url}")
-    print(f"  Model: {cfg.model} (effort {cfg.effort}){'   DRY RUN: the mouse will not move' if cfg.dry_run else ''}")
+    brain = "local open model" if cfg.brain == "local" else f"Claude API (effort {cfg.effort})"
+    print(f"  Brain: {brain}: {model_name(cfg)}{'   DRY RUN: the mouse will not move' if cfg.dry_run else ''}")
     if session.screen_error:
         print(f"  Warning: {session.screen_error}")
-    ready, hint = api_hint()
+    ready, hint = api_hint(cfg)
     if not ready:
         print(f"  Warning: {hint}")
     print("  Stop a task: Esc in the page, the Stop button, or push the mouse into a screen corner.")

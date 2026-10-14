@@ -1,4 +1,4 @@
-"""The decision loop: Claude looks at screenshots and chooses actions.
+"""Optional Claude brain: Claude looks at screenshots and chooses actions.
 
 Uses Claude's computer-use toolset (``computer_toolset_20260801``) plus two
 tools of our own:
@@ -17,7 +17,8 @@ from dataclasses import dataclass
 import anthropic
 
 from .config import Config
-from .controller import Controller, EmergencyStop, UserTookOver, describe
+from .controller import Controller, EmergencyStop
+from .hooks import ConsoleHooks, Hooks, RunResult, Stopped, check_stop, run_action  # noqa: F401  (re-exported)
 from .permissions import PermissionDenied
 
 SYSTEM_PROMPT = """\
@@ -76,29 +77,9 @@ BETA_PROGRESS = "thinking-display-updates-2026-08-18"
 BETA_FALLBACK = "server-side-fallback-2026-07-01"
 
 
-class Stopped(Exception):
-    """The user pressed Stop."""
+class ClaudeBrain:
+    """Optional brain that uses the Claude API (needs ANTHROPIC_API_KEY). The default brain is local_brain.LocalBrain."""
 
-
-class Hooks:
-    """How the loop talks to whoever is watching. The server and the console override these."""
-
-    def narrate(self, text: str, kind: str = "say") -> None: ...
-    def action(self, name: str, inp: dict, summary: str) -> None: ...
-    def preview(self) -> None: ...
-    def confirm(self, action: str, reason: str) -> bool:
-        return False
-    def paused(self, reason: str) -> None: ...
-    def wait_if_paused(self) -> None: ...
-
-
-@dataclass
-class RunResult:
-    ok: bool
-    message: str
-
-
-class Brain:
     def __init__(self, cfg: Config, controller: Controller, hooks: Hooks, stop: threading.Event, client=None):
         self.cfg = cfg
         self.controller = controller
@@ -111,7 +92,7 @@ class Brain:
     # ------------------------------------------------------------------
     def _request(self, messages: list) -> object:
         kwargs = dict(
-            model=self.cfg.model,
+            model=self.cfg.claude_model,
             max_tokens=self.cfg.max_tokens,
             system=SYSTEM_PROMPT,
             tools=TOOLS,
@@ -228,22 +209,10 @@ class Brain:
         return results
 
     def _run_action(self, name: str, inp: dict):
-        self.hooks.wait_if_paused()
-        self._check_stop()
-        if name not in ("screenshot", "zoom", "cursor_position"):
-            self.hooks.action(name, inp, describe(name, inp))
-        try:
-            return self.controller.execute(name, inp)
-        except UserTookOver as err:
-            self.hooks.paused(str(err))
-            self.hooks.wait_if_paused()
-            self._check_stop()
-            self.controller.resync()
-            return self.controller.execute(name, inp)
+        return run_action(self.controller, self.hooks, self.stop, name, inp)
 
     def _check_stop(self) -> None:
-        if self.stop.is_set():
-            raise Stopped()
+        check_stop(self.stop)
 
     def _show_text(self, content) -> None:
         for block in content:
@@ -256,32 +225,4 @@ class Brain:
         return "\n".join(b.text for b in content if getattr(b, "type", None) == "text").strip()
 
 
-class ConsoleHooks(Hooks):
-    """Plain terminal output, for `python -m leanwatch --cli "task"`."""
-
-    def narrate(self, text, kind="say"):
-        print(("   … " if kind == "thinking" else "▶ ") + text, flush=True)
-
-    def action(self, name, inp, summary):
-        print(f"     [{summary}]", flush=True)
-
-    def confirm(self, action, reason):
-        try:
-            return input(f"\n⚠ {action}. {reason}\n  Allow? [y/N] ").strip().lower() in ("y", "yes")
-        except EOFError:
-            return False
-
-    def __init__(self):
-        self._paused = False
-
-    def paused(self, reason):
-        print(f"⏸ {reason}", flush=True)
-        self._paused = True
-
-    def wait_if_paused(self):
-        if self._paused:
-            try:
-                input("  Press Enter to let me carry on… ")
-            except EOFError:
-                pass
-            self._paused = False
+Brain = ClaudeBrain  # older name

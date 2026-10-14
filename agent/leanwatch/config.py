@@ -14,11 +14,27 @@ def _env(name: str, default: str) -> str:
 
 @dataclass
 class Config:
-    # Claude
-    model: str = field(default_factory=lambda: _env("MODEL", "claude-opus-5-5"))
+    # Which brain chooses the actions:
+    #   "local"  - an open vision-language model running on this computer (default, no API key)
+    #   "claude" - the Claude API (optional; needs ANTHROPIC_API_KEY and `pip install anthropic`)
+    brain: str = field(default_factory=lambda: _env("BRAIN", "local"))
+    max_turns: int = 40
+
+    # Local open model (Hugging Face id, or a folder from training/train_sft.py)
+    local_model: str = field(default_factory=lambda: _env("LOCAL_MODEL", "ByteDance-Seed/UI-TARS-1.5-7B"))
+    adapter: str | None = field(default_factory=lambda: _env("ADAPTER", "") or None)   # LoRA folder, optional
+    load_in_4bit: bool = field(default_factory=lambda: _env("4BIT", "0") == "1")          # needs bitsandbytes + NVIDIA GPU
+    device: str = field(default_factory=lambda: _env("DEVICE", "auto"))                  # auto, cuda, mps or cpu
+    coords: str = field(default_factory=lambda: _env("COORDS", "abs"))                   # abs (Qwen2.5-VL, UI-TARS-1.5) or rel1000
+    local_max_pixels: int | None = None   # cap on image size the model sees; None keeps the model's own setting
+    max_new_tokens: int = 512
+    history_images: int = 3               # screenshots kept in the conversation
+    language: str = "English"             # language of the explanations
+
+    # Claude (optional brain)
+    claude_model: str = field(default_factory=lambda: _env("CLAUDE_MODEL", "claude-opus-5-5"))
     effort: str = field(default_factory=lambda: _env("EFFORT", "medium"))
     max_tokens: int = 16000
-    max_turns: int = 40
     # Optional API betas: progress notes between tool calls, and server-side
     # fallback to another model if a request is declined by a safety filter.
     progress_updates: bool = True
