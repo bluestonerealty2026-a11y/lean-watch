@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LeanWatch</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Type what you want to do. LeanWatch moves the cursor and clicks for you, explaining every step so you can learn by watching.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&family=Lexend:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="brand" href="#watch" aria-label="LeanWatch home">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="13" cy="13" r="11" class="brand__halo"></circle>
+        <path d="M8 5 L8 25 L13 20 L17 28 L20.5 26.5 L16.5 18.5 L23 18.5 Z" class="brand__arrow"></path>
+      </svg>
+      <span class="brand__name">LeanWatch</span>
+    </a>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button class="tab" role="tab" id="tab-watch" aria-controls="view-watch" aria-selected="true" data-view="watch">Watch</button>
+      <button class="tab" role="tab" id="tab-progress" aria-controls="view-progress" aria-selected="false" data-view="progress">Build progress</button>
+      <button class="tab" role="tab" id="tab-how" aria-controls="view-how" aria-selected="false" data-view="how">How it works</button>
+    </nav>
+    <div class="status-pills">
+      <button type="button" class="pill" id="pill-permission" data-state="off" title="Permission to control the cursor">
+        <span class="pill__dot"></span><span class="pill__text">No permission yet</span>
+      </button>
+      <span class="pill" id="pill-agent" data-state="off" title="Local agent for your real computer">
+        <span class="pill__dot"></span><span class="pill__text">Local agent offline</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+
+  <!-- ============ WATCH ============ -->
+  <section class="view view--watch" id="view-watch" role="tabpanel" aria-labelledby="tab-watch">
+    <div class="stage">
+      <div class="stage__bar">
+        <div class="stage__title">
+          <span class="eyebrow" id="stage-eyebrow">Practice screen</span>
+          <span class="stage__hint" id="stage-hint">A safe pretend computer. Nothing here touches your real files.</span>
+        </div>
+        <div class="readout" aria-live="off">
+          <span class="readout__item"><span class="readout__k">x</span><span id="ro-x">0</span></span>
+          <span class="readout__item"><span class="readout__k">y</span><span id="ro-y">0</span></span>
+          <span class="readout__item"><span class="readout__k">move</span><span id="ro-ms">0</span><span class="readout__u">ms</span></span>
+        </div>
+      </div>
+      <div class="screen-frame" id="screen-frame">
+        <div class="screen-fit" id="screen-fit">
+          <!-- SimOS mounts here -->
+        </div>
+        <div class="live-view" id="live-view" hidden>
+          <img id="live-img" alt="Live view of your computer screen, sent by the local agent">
+          <div class="live-view__cursor" id="live-cursor" hidden></div>
+          <p class="live-view__empty" id="live-empty">Waiting for the first screenshot from your computer…</p>
+        </div>
+      </div>
+      <div class="stage__controls">
+        <div class="run-buttons">
+          <button class="btn btn--ghost" id="btn-pause" disabled>Pause</button>
+          <button class="btn btn--stop" id="btn-stop" disabled title="Stop (Esc)">Stop <kbd>Esc</kbd></button>
+        </div>
+        <div class="seg" role="radiogroup" aria-label="Cursor speed">
+          <span class="seg__label">Speed</span>
+          <button class="seg__btn" role="radio" aria-checked="false" data-speed="0.6">Slow</button>
+          <button class="seg__btn" role="radio" aria-checked="true" data-speed="1">Normal</button>
+          <button class="seg__btn" role="radio" aria-checked="false" data-speed="2">Fast</button>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="opt-speak">
+          <span>Read steps aloud</span>
+        </label>
+      </div>
+    </div>
+
+    <aside class="notes" aria-label="What the agent is doing">
+      <div class="notes__head">
+        <h2 class="notes__title">Step by step</h2>
+        <span class="notes__state" id="run-state" data-state="idle">Idle</span>
+      </div>
+      <div class="notes__body" id="notes-body" aria-live="polite">
+        <!-- filled by main.js -->
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============ PROGRESS ============ -->
+  <section class="view view--progress" id="view-progress" role="tabpanel" aria-labelledby="tab-progress" hidden>
+    <div class="progress-head">
+      <div>
+        <p class="eyebrow">Project tracker</p>
+        <h1 class="h1">Build progress</h1>
+        <p class="lede">What exists in this repository today, what is next, and the path toward training our own cursor-control model. Click a status chip to update it as you build.</p>
+      </div>
+      <div class="overall" id="overall">
+        <!-- filled by progress.js -->
+      </div>
+    </div>
+    <div class="progress-grid">
+      <div class="phases" id="phases"></div>
+      <aside class="side-cards">
+        <div class="card" id="diagnostics">
+          <h2 class="h3">Live system check</h2>
+          <p class="muted small">Runs in this browser each time you open this tab.</p>
+          <ul class="diag" id="diag-list"></ul>
+          <button class="btn btn--ghost btn--sm" id="btn-recheck">Run checks again</button>
+        </div>
+        <div class="card" id="next-up">
+          <h2 class="h3">Next up</h2>
+          <ol class="next-list" id="next-list"></ol>
+        </div>
+        <button class="btn btn--ghost btn--sm" id="btn-reset-progress">Reset chips to project defaults</button>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section class="view view--how" id="view-how" role="tabpanel" aria-labelledby="tab-how" hidden>
+    <p class="eyebrow">Under the hood</p>
+    <h1 class="h1">Look, decide, act, check</h1>
+    <p class="lede">LeanWatch runs the same loop a robot arm does. It looks at the screen, decides on the next move, moves the cursor, then checks whether the move worked before taking the next one.</p>
+
+    <div class="loop-figure">
+      <svg viewBox="0 0 640 260" role="img" aria-labelledby="loop-title loop-desc" class="loop-svg">
+        <title id="loop-title">The agent loop</title>
+        <desc id="loop-desc">Four stages in a cycle: Look at the screen, Decide the next step, Act with the mouse and keyboard, Check the result, then back to Look.</desc>
+        <defs>
+          <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 Z" class="loop-svg__head"></path>
+          </marker>
+        </defs>
+        <g class="loop-svg__node">
+          <rect x="20" y="20" width="250" height="80" rx="10"></rect>
+          <text x="40" y="52" class="loop-svg__t">1  Look</text>
+          <text x="40" y="78" class="loop-svg__s">Screenshot, scaled to fit the model</text>
+        </g>
+        <g class="loop-svg__node">
+          <rect x="370" y="20" width="250" height="80" rx="10"></rect>
+          <text x="390" y="52" class="loop-svg__t">2  Decide</text>
+          <text x="390" y="78" class="loop-svg__s">Intent planner or Claude vision</text>
+        </g>
+        <g class="loop-svg__node">
+          <rect x="370" y="160" width="250" height="80" rx="10"></rect>
+          <text x="390" y="192" class="loop-svg__t">3  Act</text>
+          <text x="390" y="218" class="loop-svg__s">Human-like cursor path, click, type</text>
+        </g>
+        <g class="loop-svg__node">
+          <rect x="20" y="160" width="250" height="80" rx="10"></rect>
+          <text x="40" y="192" class="loop-svg__t">4  Check</text>
+          <text x="40" y="218" class="loop-svg__s">Did the screen change as expected?</text>
+        </g>
+        <path d="M272 60 L366 60" class="loop-svg__edge" marker-end="url(#arrowhead)"></path>
+        <path d="M495 102 L495 156" class="loop-svg__edge" marker-end="url(#arrowhead)"></path>
+        <path d="M368 200 L274 200" class="loop-svg__edge" marker-end="url(#arrowhead)"></path>
+        <path d="M145 158 L145 104" class="loop-svg__edge" marker-end="url(#arrowhead)"></path>
+      </svg>
+    </div>
+
+    <div class="how-grid">
+      <article class="card">
+        <h2 class="h3">Two brains, one interface</h2>
+        <div class="table-wrap">
+          <table class="cmp">
+            <thead><tr><th scope="col"></th><th scope="col">Practice screen</th><th scope="col">My computer</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Where it runs</th><td>In this browser tab</td><td>Python agent on your machine</td></tr>
+              <tr><th scope="row">How it decides</th><td>TF-IDF intent classifier with slot filling</td><td>Claude computer-use toolset reading screenshots</td></tr>
+              <tr><th scope="row">What it controls</th><td>The pretend desktop above</td><td>Your real mouse and keyboard</td></tr>
+              <tr><th scope="row">Data leaving the device</th><td>None</td><td>Screenshots sent to the Claude API</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+      <article class="card">
+        <h2 class="h3">Safety rules the agent follows</h2>
+        <ul class="ticks">
+          <li>Nothing moves until you grant permission, and permission ends when you close the session.</li>
+          <li><kbd>Esc</kbd> or the Stop button halts it immediately. On a real computer, slamming the mouse into a screen corner also stops it.</li>
+          <li>If you move the mouse yourself, the agent pauses and lets you take over.</li>
+          <li>Deleting, sending, buying and installing always need your click on Allow.</li>
+          <li>Text written on web pages or in documents is never treated as an instruction.</li>
+          <li>The local agent only listens on 127.0.0.1 and needs a secret session token.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2 class="h3">Run it on your computer</h2>
+        <ol class="steps-plain">
+          <li>Install Python 3.10 or newer.</li>
+          <li>In a terminal: <code>cd agent</code> then <code>pip install -r requirements.txt</code></li>
+          <li>Sign in to the Claude API: set <code>ANTHROPIC_API_KEY</code> or run <code>ant auth login</code>.</li>
+          <li>Start it: <code>python -m leanwatch</code>. Your browser opens this page, already connected.</li>
+          <li>Optional: <code>python -m leanwatch --overlay</code> adds the floating command box to the bottom-right corner of every screen.</li>
+          <li>Try it safely first with <code>--dry-run</code>: the agent plans and narrates but never moves the mouse.</li>
+        </ol>
+      </article>
+    </div>
+  </section>
+</main>
+
+<!-- ============ COMMAND BOX (bottom-right on every view) ============ -->
+<aside class="cmd" id="cmd" aria-label="Command box">
+  <div class="cmd__suggest" id="cmd-suggest" hidden>
+    <p class="cmd__suggest-label">Try one of these</p>
+    <div class="chips" id="cmd-chips"></div>
+  </div>
+  <form class="cmd__form" id="cmd-form" autocomplete="off">
+    <div class="cmd__row">
+      <div class="target-switch" role="radiogroup" aria-label="Where should the agent work?">
+        <button type="button" class="target-switch__btn" role="radio" aria-checked="true" data-target-mode="sim">Practice screen</button>
+        <button type="button" class="target-switch__btn" role="radio" aria-checked="false" data-target-mode="device">My computer</button>
+      </div>
+      <button type="button" class="cmd__collapse" id="cmd-collapse" aria-expanded="true" aria-controls="cmd-form" title="Hide command box">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6 L8 11 L13 6"></path></svg>
+      </button>
+    </div>
+    <label class="sr-only" for="cmd-input">Tell LeanWatch what to do</label>
+    <div class="cmd__input-row">
+      <input id="cmd-input" class="cmd__input" type="text" placeholder="What should I do? e.g. turn on dark mode" spellcheck="true">
+      <button class="btn btn--go" id="cmd-go" type="submit">Go</button>
+    </div>
+    <p class="cmd__status" id="cmd-status">Press <kbd>/</kbd> to type a command.</p>
+  </form>
+  <button class="cmd__fab" id="cmd-fab" type="button" hidden aria-label="Open command box">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 5 L8 25 L13 20 L17 28 L20.5 26.5 L16.5 18.5 L23 18.5 Z"></path></svg>
+  </button>
+</aside>
+
+<!-- ============ CONSENT ============ -->
+<div class="modal" id="consent" hidden role="dialog" aria-modal="true" aria-labelledby="consent-title">
+  <div class="modal__panel">
+    <p class="eyebrow">Before I touch anything</p>
+    <h2 class="h2" id="consent-title">May I control the cursor?</h2>
+    <p class="modal__lede" id="consent-lede">I will move the pointer, click and type to show you how it is done. You can stop me at any time.</p>
+    <fieldset class="scopes">
+      <legend class="sr-only">What I may do</legend>
+      <label class="check check--block"><input type="checkbox" id="scope-mouse" checked> <span><strong>Move the pointer and click</strong><br><span class="muted small">Needed for almost every task.</span></span></label>
+      <label class="check check--block"><input type="checkbox" id="scope-keyboard" checked> <span><strong>Type with the keyboard</strong><br><span class="muted small">For filling in boxes and keyboard shortcuts.</span></span></label>
+      <label class="check check--block"><input type="checkbox" id="scope-confirm" checked disabled> <span><strong>Ask me before anything risky</strong><br><span class="muted small">Deleting, sending, buying, installing. Always on.</span></span></label>
+      <label class="check check--block" id="scope-device-row" hidden><input type="checkbox" id="scope-device"> <span><strong>I understand this controls my real computer</strong><br><span class="muted small">The local agent will use your actual mouse and keyboard.</span></span></label>
+    </fieldset>
+    <p class="modal__fine">Permission lasts until you close this page or press Revoke. Stop any time with <kbd>Esc</kbd>.</p>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" id="consent-no" type="button">Not now</button>
+      <button class="btn btn--go" id="consent-yes" type="button">Allow</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/util.js"></script>
+<script src="js/simos.js"></script>
+<script src="js/apps/settings.js"></script>
+<script src="js/apps/photolab.js"></script>
+<script src="js/apps/blocks3d.js"></script>
+<script src="js/apps/terminal.js"></script>
+<script src="js/apps/files.js"></script>
+<script src="js/cursor.js"></script>
+<script src="js/planner.js"></script>
+<script src="js/agent.js"></script>
+<script src="js/bridge.js"></script>
+<script src="js/progress.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

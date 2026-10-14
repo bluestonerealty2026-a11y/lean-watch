@@ -1,0 +1,8 @@
+# LeanWatch local agent
+anthropic>=1.13       # Claude API (computer-use toolset)
+aiohttp>=3.9          # local web server + WebSocket bridge
+mss>=9.0              # fast screenshots
+pillow>=10.0          # resizing and encoding screenshots
+pyautogui>=0.9.54     # moves the real mouse and keyboard
+# The floating command box (overlay.py) uses tkinter, which ships with most
+# Python installers. On Debian/Ubuntu: sudo apt install python3-tk
