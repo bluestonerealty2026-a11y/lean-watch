@@ -110,6 +110,20 @@
     target(name) {
       return LW.util.byTarget(this.root, name);
     }
+    /** Every clickable target that a person could actually see right now (not hidden behind another window). */
+    visibleTargets() {
+      const out = [];
+      for (const el of this.root.querySelectorAll("[data-target]")) {
+        if (!el.getClientRects().length) continue;
+        const r = this.rectOf(el);
+        if (r.w < 4 || r.h < 4 || r.x < 0 || r.y < 0 || r.x + r.w > SCREEN_W || r.y + r.h > SCREEN_H) continue;
+        const c = this.toClient(r.x + r.w / 2, r.y + r.h / 2);
+        const hit = document.elementsFromPoint(c.x, c.y).find((e) => this.root.contains(e) && e !== this.root);
+        if (!hit || !(el === hit || el.contains(hit))) continue;
+        out.push({ el, target: el.dataset.target, rect: r });
+      }
+      return out;
+    }
 
     /* ---------- taskbar ---------- */
     _buildTaskbar() {

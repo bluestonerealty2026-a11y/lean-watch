@@ -28,6 +28,9 @@
       this.mode = null;
       this._confirm = null;
       this._lastTarget = null;
+      // Optional async hook, called with each action just before it happens.
+      // The training-data recorder (training/record_practice.mjs) uses it to save a screenshot + label.
+      this.beforeAct = null;
     }
 
     setSpeed(s) { this.speed = s; if (this.ctrl) this.ctrl.speed = s; }
@@ -84,6 +87,7 @@
           }
 
           this.emit("step", { index: i, status: "active" });
+          this._say = say;
           if (step.do !== "verify") await this._narrate(say, i);
           const r = mode === "practice" ? await this._practice(step, say) : await this._exec(step);
 
@@ -155,6 +159,7 @@
       switch (step.do) {
         case "open": {
           const el = os.isOpen(step.app) ? os.target(`win.${step.app}.title`) : os.target(`taskbar.${step.app}`);
+          await this._report({ type: "click", clicks: 1 }, el);
           await this._moveTo(el);
           this._click(el, 1);
           await ctrl.sleep(350);
@@ -163,6 +168,7 @@
         case "click": {
           const el = await this._find(step.target);
           if (!el) return { ok: false, message: `I couldn't find that on the screen (${step.target}).` };
+          await this._report({ type: "click", clicks: step.clicks || 1 }, el);
           await this._moveTo(el);
           this._click(el, step.clicks || 1);
           this._lastTarget = step.target;
@@ -172,6 +178,7 @@
         case "type": {
           const el = this._typingTarget();
           if (!el) return { ok: false, message: "There is no text box selected to type into." };
+          await this._report({ type: "type", text: String(step.text) });
           for (const ch of String(step.text)) {
             await ctrl.sleep(45 + Math.random() * 55);
             insertText(el, ch);
@@ -179,6 +186,7 @@
           return { ok: true };
         }
         case "key": {
+          await this._report({ type: "hotkey", keys: [...(step.ctrl ? ["ctrl"] : []), ...(step.shift ? ["shift"] : []), step.key.toLowerCase()] });
           this.cursor.say(`${step.ctrl ? "Ctrl + " : ""}${step.shift ? "Shift + " : ""}${step.key.length === 1 ? step.key.toUpperCase() : step.key}`);
           this.cursor.pulse("key");
           pressKey(this._keyTarget(), step);
@@ -190,6 +198,7 @@
           if (!el || !el.slider) return { ok: false, message: "I couldn't find that slider." };
           const from = el.slider.pointFor(el.slider.value);
           const to = el.slider.pointFor(step.value);
+          await this._report({ type: "drag", x1: from.x, y1: from.y, x2: to.x, y2: to.y }, el);
           await this.cursor.moveTo(from.x, from.y, ctrl);
           const c0 = os.toClient(from.x, from.y);
           firePointer(el, "pointerdown", c0);
@@ -201,7 +210,9 @@
           await ctrl.sleep(200);
           return { ok: true };
         }
-        case "confirm": return this._ask(step.say);
+        case "confirm":
+          await this._report({ type: "confirm", text: step.say });
+          return this._ask(step.say);
         case "verify": {
           await ctrl.sleep(250);
           const ok = !!step.test(os);
@@ -211,6 +222,23 @@
         case "wait": await ctrl.sleep(step.ms || 500); return { ok: true };
         default: return { ok: false, message: `Unknown step "${step.do}".` };
       }
+    }
+
+    /** Tell the beforeAct hook what is about to happen, in screen coordinates. */
+    async _report(action, el) {
+      if (!this.beforeAct) return;
+      const info = { ...action, thought: this._say || "" };
+      if (el) {
+        const r = this.os.rectOf(el);
+        info.bbox = [r.x, r.y, r.x + r.w, r.y + r.h];
+        info.label = describeElement(el);
+        if (action.type === "click") {
+          const c = this.os.centerOf(el);
+          info.x = c.x;
+          info.y = c.y;
+        }
+      }
+      await this.beforeAct(info);
     }
 
     async _ask(text) {
@@ -374,6 +402,13 @@
     }
   }
 
+  /** Words a person would use for an on-screen element. */
+  function describeElement(el) {
+    const own = el.getAttribute("aria-label") || el.getAttribute("title");
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    return (own || (text.length <= 60 ? text : "") || el.dataset.target || "").trim();
+  }
+
   /* ---------------- synthetic input helpers ---------------- */
   function fireMouse(el, type, c, detail = 1) {
     el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: c.x, clientY: c.y, button: 0, buttons: type === "mousedown" ? 1 : 0, detail }));
@@ -406,4 +441,5 @@
   }
 
   LW.Agent = Agent;
+  LW.describeElement = describeElement;
 })();
