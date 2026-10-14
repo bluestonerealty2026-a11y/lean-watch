@@ -129,7 +129,7 @@
       h("div.callout.callout--warn", {}, h("strong", {}, result.message)),
       sug.length ? h("p.notes__sub", {}, "Closest things I can do here:") : null,
       sug.length ? h("div.group__chips", {}, ...sug.map((s) => exampleChip(s.examples[0].replace(/^./, (c) => c.toUpperCase())))) : null,
-      h("p.small.muted", {}, "The practice screen knows a fixed set of skills. Switch to My computer and the local agent can try anything, because Claude reads the real screen."));
+      h("p.small.muted", {}, "The practice screen knows a fixed set of skills. Switch to My computer and the local agent can try anything, because its vision model reads the real screen."));
     setRunState("idle", "Not understood");
   }
 
@@ -431,7 +431,7 @@
         h("li", {}, h("span", {}, "Model"), h("code", {}, i.model || "unknown")),
         h("li", {}, h("span", {}, "Screen"), h("code", {}, i.screen ? `${i.screen.width} × ${i.screen.height}` : "unknown")),
         h("li", {}, h("span", {}, "Mode"), h("code", {}, i.dry_run ? "dry run, the mouse won't move" : "live"))),
-      i.api_ready === false ? h("div.callout.callout--warn", {}, h("strong", {}, "Claude API is not set up."), h("p", {}, i.api_hint || "Set ANTHROPIC_API_KEY and restart the agent.")) : null);
+      i.api_ready === false ? h("div.callout.callout--warn", {}, h("strong", {}, "The optional Claude brain is not set up."), h("p", {}, i.api_hint || "Set ANTHROPIC_API_KEY, or restart the agent without --brain claude to use the local model.")) : null);
     setRunState("idle", "Ready");
   }
 

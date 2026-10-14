@@ -40,6 +40,26 @@ def risky_intent(thought: str) -> str | None:
     return m.group(0).lower() if m else None
 
 
+def set_image_size(processor, max_pixels: int | None = None, min_pixels: int | None = None) -> None:
+    """Cap the screenshot size a Qwen-style processor resizes to (coordinates depend on it).
+
+    transformers 5 keeps the cap in image_processor.size (shortest_edge/longest_edge, in pixels);
+    the old min_pixels/max_pixels attributes still work but are deprecated, so set the size.
+    """
+    ip = processor.image_processor
+    size = getattr(ip, "size", None)
+    if size is not None and "longest_edge" in dict(size):
+        new = {k: v for k, v in dict(size).items() if v is not None}
+        if max_pixels:
+            new["longest_edge"] = max_pixels
+        if min_pixels:
+            new["shortest_edge"] = min_pixels
+        ip.size = type(size)(**new) if not isinstance(size, dict) else new
+    for name, value in (("max_pixels", max_pixels), ("min_pixels", min_pixels)):
+        if value and getattr(ip, name, None) is not None:   # older processors that keep the attributes
+            setattr(ip, name, value)
+
+
 @dataclass
 class ModelAnswer:
     text: str
@@ -80,10 +100,7 @@ class LocalModel:
         has_processor = adapter and any((Path(adapter) / f).exists() for f in ("processor_config.json", "preprocessor_config.json"))
         self.processor = AutoProcessor.from_pretrained(adapter if has_processor else model_id)
         if max_pixels:
-            ip = self.processor.image_processor
-            ip.max_pixels = max_pixels
-            if isinstance(getattr(ip, "size", None), dict) and "longest_edge" in ip.size:
-                ip.size["longest_edge"] = max_pixels
+            set_image_size(self.processor, max_pixels=max_pixels)
         self.model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
         if adapter:
             from peft import PeftModel
@@ -119,7 +136,7 @@ class LocalBrain:
 
     # ------------------------------------------------------------------
     def run(self, task: str) -> RunResult:
-        prompt = computer_prompt(task, self.cfg.language)
+        prompt = computer_prompt(task, self.cfg.language, self.cfg.style)
         screenshots: list = []
         past: list[dict] = []
         bad_answers = 0

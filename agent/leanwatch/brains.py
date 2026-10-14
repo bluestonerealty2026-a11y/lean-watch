@@ -27,6 +27,15 @@ def adapter_settings(adapter: str | None) -> dict:
     return {k: v for k, v in info.items() if v is not None}
 
 
+def trained_settings(adapter: str | None, model: str | None = None) -> dict:
+    """Settings saved with a fine-tuned model: from the adapter folder, else from a merged model folder."""
+    if adapter:
+        return adapter_settings(adapter)
+    if model and (Path(model) / "leanwatch.json").exists():
+        return json.loads((Path(model) / "leanwatch.json").read_text())
+    return {}
+
+
 def resolve_model_id(model: str | None, adapter: str | None) -> str:
     """The model to load: the one asked for, else the adapter's base, else the default."""
     return model or adapter_settings(adapter).get("base_model") or DEFAULT_LOCAL_MODEL
@@ -35,13 +44,24 @@ def resolve_model_id(model: str | None, adapter: str | None) -> str:
 def load_local_model(cfg: Config):
     from .local_brain import LocalModel
 
+    try:
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+    except ModuleNotFoundError as err:
+        raise RuntimeError(f"The local model needs {err.name}: cd agent && pip install -r requirements.txt") from None
     return LocalModel(cfg.local_model, adapter=cfg.adapter, device=cfg.device, load_in_4bit=cfg.load_in_4bit,
                       max_pixels=cfg.local_max_pixels, max_new_tokens=cfg.max_new_tokens)
 
 
 def make_brain(cfg: Config, controller: Controller, hooks: Hooks, stop: threading.Event, local_model=None):
     if cfg.brain == "claude":
-        from .brain import ClaudeBrain
+        try:
+            from .brain import ClaudeBrain
+        except ModuleNotFoundError as err:
+            if err.name != "anthropic":
+                raise
+            raise RuntimeError("The Claude brain needs the anthropic package: "
+                               "pip install -r requirements-claude.txt (or run the default local brain).") from None
 
         return ClaudeBrain(cfg, controller, hooks, stop)
     if cfg.brain != "local":

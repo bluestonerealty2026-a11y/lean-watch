@@ -26,6 +26,7 @@ class Config:
     load_in_4bit: bool = field(default_factory=lambda: _env("4BIT", "0") == "1")          # needs bitsandbytes + NVIDIA GPU
     device: str = field(default_factory=lambda: _env("DEVICE", "auto"))                  # auto, cuda, mps or cpu
     coords: str = field(default_factory=lambda: _env("COORDS", "abs"))                   # abs (Qwen2.5-VL, UI-TARS-1.5) or rel1000
+    style: str = field(default_factory=lambda: _env("STYLE", "box"))                     # how points are written: box or point
     local_max_pixels: int | None = None   # cap on image size the model sees; None keeps the model's own setting
     max_new_tokens: int = 512
     history_images: int = 3               # screenshots kept in the conversation

@@ -1,9 +1,11 @@
 import threading
 from types import SimpleNamespace as NS
 
-import anthropic
-import httpx2
 import pytest
+
+# The Claude brain is optional (requirements-claude.txt); skip these tests without it.
+anthropic = pytest.importorskip("anthropic")
+httpx2 = pytest.importorskip("httpx2")
 
 from leanwatch.brain import NOT_EXECUTED, Brain, Hooks
 from leanwatch.config import Config

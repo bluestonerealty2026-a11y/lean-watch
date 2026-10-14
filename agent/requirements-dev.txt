@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest>=8
+# test_brain.py (the optional Claude brain) is skipped unless anthropic is installed

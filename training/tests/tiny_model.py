@@ -38,9 +38,10 @@ CHAT_TEMPLATE = (
 
 def _corpus():
     from leanwatch_paths import agent_path  # noqa: F401  (adds agent/ to sys.path)
-    from leanwatch.local_prompts import COMPUTER_USE_PROMPT, GROUNDING_PROMPT
+    from leanwatch.local_prompts import computer_prompt, grounding_prompt
 
-    lines = [COMPUTER_USE_PROMPT, GROUNDING_PROMPT]
+    lines = [f(style) for style in ("box", "point")
+             for f in (lambda s: computer_prompt("Turn on dark mode", "English", s), lambda s: grounding_prompt("Click OK.", s))]
     lines += [f"Thought: I click the button.\nAction: click(start_box='<|box_start|>({i},{i * 7 % 997})<|box_end|>')" for i in range(1000)]
     lines += ["type(content='hello') hotkey(key='ctrl z') drag(start_box=, end_box=) scroll(direction='down') finished(content='Done.')"] * 20
     return lines

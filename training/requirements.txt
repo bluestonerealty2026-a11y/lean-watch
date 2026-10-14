@@ -1,0 +1,7 @@
+# Fine-tuning an open GUI model for LeanWatch (see training/README.md).
+-r ../agent/requirements.txt
+trl>=1.0              # SFTTrainer with vision-language prompt-completion data
+datasets>=3.0         # loading train.jsonl and Hugging Face GUI datasets
+# Optional:
+#   bitsandbytes      QLoRA (--4bit), NVIDIA GPUs only
+#   trackio / wandb / tensorboard   training curves (--report-to)

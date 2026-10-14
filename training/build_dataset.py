@@ -82,7 +82,7 @@ def build(practice_dirs: list[Path], out: Path, coords: str, max_pixels: int, mi
                 ep = json.loads(line)
                 split = split_of(f"{tag}/{ep['id']}", val_fraction)
                 space = CoordSpace(coords, ep["width"], ep["height"], min_pixels=min_pixels, max_pixels=max_pixels)
-                prompt_text = computer_prompt(ep["instruction"], language)
+                prompt_text = computer_prompt(ep["instruction"], language, style)
                 past: list[dict] = []
                 for k, step in enumerate(ep["steps"]):
                     target = format_response(step.get("thought", ""), format_action(step["action"], space, style))
@@ -113,7 +113,7 @@ def build(practice_dirs: list[Path], out: Path, coords: str, max_pixels: int, mi
                 # Sources that already give a full instruction keep it; bare element names get a short sentence.
                 instruction = g.get("instruction") or grounding_instruction(g["label"], g.get("role", ""), rng)
                 messages = [{"role": "user", "content": [
-                    {"type": "text", "text": grounding_prompt(instruction)},
+                    {"type": "text", "text": grounding_prompt(instruction, style)},
                     {"type": "image"}]}]
                 write(split, {"images": [str(root / g["image"])], "prompt": messages,
                               "completion": [{"role": "assistant", "content": [{"type": "text", "text": target}]}],

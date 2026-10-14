@@ -9,7 +9,8 @@ The project has two parts:
 | Part | What it does | Needs |
 | --- | --- | --- |
 | `web/` control center | Command box in the bottom-right corner, permission screen, step-by-step notes, a **practice computer** with five apps, build-progress tracker | Just a browser: https://bluestonerealty2026-a11y.github.io/lean-watch/ or `web/index.html` |
-| `agent/` local agent | Controls your **real** mouse and keyboard with Claude's computer-use toolset, serves the control center, and adds an always-on-top command box to every screen | Python 3.10+, a Claude API key |
+| `agent/` local agent | Controls your **real** mouse and keyboard with an open vision-language model running on your computer, serves the control center, and adds an always-on-top command box to every screen | Python 3.10+, about 6 GB of GPU memory (or more RAM and patience). No API key |
+| `training/` | Records training data on the practice computer, imports public GUI datasets, and fine-tunes the open model with LoRA / QLoRA | A GPU for real runs; see [training/README.md](training/README.md) |
 
 ## Try it in your browser
 
@@ -26,12 +27,15 @@ Press <kbd>/</kbd> to jump to the command box and <kbd>Esc</kbd> to stop. The pr
 
 ```bash
 cd agent
-pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
+pip install -r requirements.txt         # with an NVIDIA GPU, install the CUDA build of torch first
 python -m leanwatch                     # opens the control center, already connected
 ```
 
-In the command box choose **My computer**, give permission, and type a task.
+In the command box choose **My computer**, give permission, and type a task. The first task downloads
+[UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B) (Apache-2.0, about 16 GB) from
+Hugging Face. Everything then runs on your computer: no API key, and no screenshots leave the machine.
+On an NVIDIA GPU with less than 24 GB, add `--4bit` (`pip install bitsandbytes` first) to fit it in about
+6 GB. On an Apple Silicon Mac it runs on the GPU (`mps`) as is.
 
 | Option | What it does |
 | --- | --- |
@@ -39,7 +43,11 @@ In the command box choose **My computer**, give permission, and type a task.
 | `--dry-run` | Plans and narrates on your real screen but never moves the mouse or presses keys. Start here. |
 | `--cli "task"` | Runs one task in the terminal, no browser |
 | `--speed 0.6` | Slower pointer, easier to follow |
-| `--model`, `--effort` | Which Claude model to use (default `claude-opus-5-5`) and how hard it thinks (default `medium`) |
+| `--adapter runs/my-model` | Use a model you fine-tuned with `training/train_sft.py` (it remembers its own settings) |
+| `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`) |
+| `--device`, `--max-pixels` | Where the model runs (`auto`, `cuda`, `mps`, `cpu`) and the largest screenshot it sees |
+| `--language Spanish` | Language of the explanations |
+| `--brain claude` | Optional: use the Claude API instead (`pip install -r requirements-claude.txt`, needs `ANTHROPIC_API_KEY`) |
 
 ### Platform notes
 
@@ -75,22 +83,30 @@ web/
   tests/smoke.mjs      Playwright end-to-end test
 
 agent/leanwatch/
-  brain.py             Claude computer-use loop with narrate and request_confirmation tools
+  local_brain.py       default brain: open GUI model on this computer (screenshot -> Thought + Action)
+  actions.py           UI-TARS action language: parse answers, write training targets, coordinate spaces
+  local_prompts.py     the prompt and conversation, shared by training and the agent
+  brains.py            picks the brain; reads a fine-tuned model's saved settings
+  brain.py             optional Claude computer-use brain
   controller.py        executes the 17 computer-use actions with pyautogui
   screen.py            screenshots, scaling and coordinate mapping
   permissions.py       consent scopes and risky-action rules
   server.py            aiohttp server: page, WebSocket bridge, API for the overlay
   overlay.py           always-on-top command box (tkinter)
   __main__.py          command line
+
+training/              data engine, dataset importers, LoRA/QLoRA fine-tuning, evaluation
 ```
 
 - **Practice screen**: the planner matches your sentence to the closest example sentence of each skill (cosine similarity of TF-IDF vectors), pulls out details like numbers, names and colours, and builds a list of steps. The executor only acts through the pointer: it moves to a point and clicks whatever is under it, as a person would.
-- **Your computer**: `brain.py` sends a scaled screenshot to Claude with the `computer_toolset_20260801` toolset. Claude answers with actions (`left_click`, `type`, `scroll`, …) plus a `narrate` call explaining each one; `controller.py` maps the coordinates back to your screen and moves the real pointer along the same human-like path. The history is append-only so prompt caching and thinking blocks stay valid. Two optional API betas are on by default and switch themselves off if your account lacks them: progress notes between tool calls (`thinking.display: "updates"`), and server-side fallback (`fallbacks: "default"`), which re-runs a request on another Claude model if a safety filter declines it.
+- **Your computer**: `local_brain.py` gives the model the task and the last three screenshots. The model answers in the UI-TARS action language, for example `Thought: The Display page is open, so I click the Dark mode switch.` then `Action: click(start_box='<|box_start|>(822,231)<|box_end|>')`. LeanWatch shows the thought to you, maps the point from the model's resized image back to your screen, and `controller.py` moves the real pointer along the same human-like path. A step whose thought mentions deleting, sending, buying, installing and the like needs your Allow even if the model forgot to ask (`ask_user`).
+- **Training your own**: `training/record_practice.mjs` drives the practice computer in a headless browser and records every step (screenshot, instruction, explanation, action). `build_dataset.py` turns recordings and public datasets into chat examples, `train_sft.py` fine-tunes UI-TARS-1.5 with LoRA or QLoRA (TRL), and `evaluate.py` measures click-inside-target accuracy before and after. The full guide, with model and dataset choices per GPU, is in [training/README.md](training/README.md).
 
 ## Tests
 
 ```bash
-cd agent && pip install -r requirements-dev.txt && python -m pytest   # 63 tests, no API key or display needed
+cd agent && pip install -r requirements-dev.txt && python -m pytest   # no API key, display or model download needed
+cd training && python -m pytest                                       # whole training pipeline with a tiny model on CPU
 npm install && npm test                                               # 26 browser checks on the practice screen
 ```
 
@@ -100,4 +116,4 @@ npm install && npm test                                               # 26 brows
 
 ## Roadmap
 
-Open the **Build progress** tab for the live list. The next milestones are the first live run on real Windows, macOS and Linux desktops, then the machine-learning track: record demonstrations on the practice screen, train a UI-element detector and a behaviour-cloning policy in PyTorch, fine-tune with reinforcement learning using the practice screen as the environment, and benchmark the result against Claude.
+Open the **Build progress** tab for the live list. Next: the first live run on real Windows, macOS and Linux desktops, the first full fine-tune of UI-TARS-1.5-7B on a GPU, support for newer Qwen3.5-based GUI models, reinforcement learning with the practice computer as the environment, and benchmarks (ScreenSpot-Pro, OSWorld-G).

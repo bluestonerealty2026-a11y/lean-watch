@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--4bit", dest="load_in_4bit", action="store_true", default=cfg.load_in_4bit, help="load the local model in 4-bit (NVIDIA GPU, needs bitsandbytes)")
     p.add_argument("--device", default=cfg.device, choices=["auto", "cuda", "mps", "cpu"])
     p.add_argument("--coords", default=None, choices=["abs", "rel1000"], help="how the model writes points: abs (UI-TARS-1.5, Qwen2.5-VL; default) or rel1000. Read from the adapter when you pass one")
+    p.add_argument("--style", default=None, choices=["box", "point"], help="how points are written in the prompt: box (start_box=..., default) or point (point='<point>x y</point>'). Read from the adapter when you pass one")
     p.add_argument("--max-pixels", type=int, default=cfg.local_max_pixels, help="largest screenshot size, in pixels, the local model sees")
     p.add_argument("--language", default=cfg.language, help="language for the explanations (default English)")
     p.add_argument("--effort", default=cfg.effort, choices=["low", "medium", "high", "xhigh", "max"], help="claude brain only: how hard it thinks per step")
@@ -41,19 +42,26 @@ def main(argv: list[str] | None = None) -> None:
         else:
             cfg.local_model = args.model
     cfg.adapter = args.adapter
-    if cfg.brain == "local" and cfg.adapter:
-        from .brains import adapter_settings, resolve_model_id
+    if cfg.brain == "local":
+        from .brains import resolve_model_id, trained_settings
 
-        trained = adapter_settings(cfg.adapter)
-        if not args.model:
+        # A model you fine-tuned remembers how its data was written (train_sft.py saves leanwatch.json
+        # next to the adapter and the merged model). Use the same settings, unless a flag says otherwise.
+        trained = trained_settings(cfg.adapter, args.model)
+        if cfg.adapter and not args.model:
             cfg.local_model = resolve_model_id(None, cfg.adapter)
         cfg.coords = trained.get("coords", cfg.coords)
+        cfg.style = trained.get("style", cfg.style)
         cfg.history_images = trained.get("history_images", cfg.history_images)
+        cfg.local_max_pixels = trained.get("max_pixels", cfg.local_max_pixels)
     cfg.load_in_4bit = args.load_in_4bit
     cfg.device = args.device
     if args.coords:
         cfg.coords = args.coords
-    cfg.local_max_pixels = args.max_pixels
+    if args.style:
+        cfg.style = args.style
+    if args.max_pixels:
+        cfg.local_max_pixels = args.max_pixels
     cfg.language = args.language
     cfg.effort = args.effort
     cfg.move_speed = args.speed

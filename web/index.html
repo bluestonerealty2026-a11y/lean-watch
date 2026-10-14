@@ -146,7 +146,7 @@
         <g class="loop-svg__node">
           <rect x="370" y="20" width="250" height="80" rx="10"></rect>
           <text x="390" y="52" class="loop-svg__t">2  Decide</text>
-          <text x="390" y="78" class="loop-svg__s">Intent planner or Claude vision</text>
+          <text x="390" y="78" class="loop-svg__s">Intent planner or vision model</text>
         </g>
         <g class="loop-svg__node">
           <rect x="370" y="160" width="250" height="80" rx="10"></rect>
@@ -173,9 +173,9 @@
             <thead><tr><th scope="col"></th><th scope="col">Practice screen</th><th scope="col">My computer</th></tr></thead>
             <tbody>
               <tr><th scope="row">Where it runs</th><td>In this browser tab</td><td>Python agent on your machine</td></tr>
-              <tr><th scope="row">How it decides</th><td>TF-IDF intent classifier with slot filling</td><td>Claude computer-use toolset reading screenshots</td></tr>
+              <tr><th scope="row">How it decides</th><td>TF-IDF intent classifier with slot filling</td><td>Open vision-language model (UI-TARS-1.5, or one you fine-tuned) reading screenshots</td></tr>
               <tr><th scope="row">What it controls</th><td>The pretend desktop above</td><td>Your real mouse and keyboard</td></tr>
-              <tr><th scope="row">Data leaving the device</th><td>None</td><td>Screenshots sent to the Claude API</td></tr>
+              <tr><th scope="row">Data leaving the device</th><td>None</td><td>None. The model runs on your computer, no API key</td></tr>
             </tbody>
           </table>
         </div>
@@ -194,10 +194,10 @@
       <article class="card">
         <h2 class="h3">Run it on your computer</h2>
         <ol class="steps-plain">
-          <li>Install Python 3.10 or newer.</li>
+          <li>Install Python 3.10 or newer. With an NVIDIA GPU, install the CUDA build of PyTorch first.</li>
           <li>In a terminal: <code>cd agent</code> then <code>pip install -r requirements.txt</code></li>
-          <li>Sign in to the Claude API: set <code>ANTHROPIC_API_KEY</code> or run <code>ant auth login</code>.</li>
-          <li>Start it: <code>python -m leanwatch</code>. Your browser opens this page, already connected.</li>
+          <li>Start it: <code>python -m leanwatch</code>. Your browser opens this page, already connected. The first task downloads the open model (UI-TARS-1.5-7B, about 16 GB); add <code>--4bit</code> to fit it in about 6 GB of GPU memory.</li>
+          <li>Using a model you fine-tuned: <code>python -m leanwatch --adapter ../runs/my-model</code> (see <code>training/README.md</code>).</li>
           <li>Optional: <code>python -m leanwatch --overlay</code> adds the floating command box to the bottom-right corner of every screen.</li>
           <li>Try it safely first with <code>--dry-run</code>: the agent plans and narrates but never moves the mouse.</li>
         </ol>

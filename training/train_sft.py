@@ -101,15 +101,15 @@ def main(argv=None):
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import SFTConfig
 
+    from leanwatch.local_brain import set_image_size
+
     meta = json.loads((a.data / "meta.json").read_text())
     tasks = set(a.tasks.split(","))
 
     processor = AutoProcessor.from_pretrained(a.base)
-    ip = processor.image_processor
     # Coordinates in the dataset were written for this exact resize rule, so the processor must use it too.
-    ip.min_pixels, ip.max_pixels = meta["min_pixels"], meta["max_pixels"]
-    if isinstance(getattr(ip, "size", None), dict):
-        ip.size = {"shortest_edge": meta["min_pixels"], "longest_edge": meta["max_pixels"]}
+    # The processor is saved with the adapter, so the agent and evaluate.py resize the same way.
+    set_image_size(processor, max_pixels=meta["max_pixels"], min_pixels=meta["min_pixels"])
 
     dtype, precision_args = pick_precision(a.device)
     model_kwargs = {"dtype": dtype}
@@ -172,11 +172,12 @@ def main(argv=None):
     result = trainer.train()
     trainer.save_model(str(a.out))
     processor.save_pretrained(str(a.out))
-    (a.out / "leanwatch.json").write_text(json.dumps({
+    settings = json.dumps({
         "base_model": a.base, "coords": meta["coords"], "style": meta["style"], "max_pixels": meta["max_pixels"],
         "min_pixels": meta["min_pixels"], "history_images": meta["history_images"], "tasks": sorted(tasks),
         "train_examples": len(train), "train_loss": result.training_loss,
-    }, indent=2))
+    }, indent=2)
+    (a.out / "leanwatch.json").write_text(settings)
     print(f"saved adapter to {a.out}  (final train loss {result.training_loss:.4f})")
 
     if a.merge:
@@ -186,6 +187,7 @@ def main(argv=None):
             merged = trainer.model.merge_and_unload()
             merged.save_pretrained(str(a.out / "merged"))
             processor.save_pretrained(str(a.out / "merged"))
+            (a.out / "merged" / "leanwatch.json").write_text(settings)
             print(f"saved merged model to {a.out / 'merged'}")
 
 

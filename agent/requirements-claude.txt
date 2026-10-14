@@ -1,0 +1,4 @@
+# Optional: use the Claude API as the brain instead of a local model
+# (python -m leanwatch --brain claude). Needs ANTHROPIC_API_KEY.
+-r requirements.txt
+anthropic>=1.13

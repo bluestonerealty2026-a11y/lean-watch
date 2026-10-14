@@ -160,3 +160,29 @@ def test_real_tiny_qwen_model_answers(tmp_path):
     assert isinstance(ans.text, str)
     # The tiny processor caps images at 64 patches of 28px; the brain must learn the real size from the grid.
     assert ans.image_w % 28 == 0 and ans.image_h % 28 == 0 and ans.image_w * ans.image_h <= 28 * 28 * 64
+
+
+@pytest.mark.parametrize("style,mark,other", [("box", "<|box_start|>(x1,y1)<|box_end|>", "<point>"),
+                                              ("point", "<point>x1 y1</point>", "box_start")])
+def test_prompt_writes_points_in_the_trained_style(style, mark, other):
+    from leanwatch.local_prompts import computer_prompt, grounding_prompt
+
+    text = computer_prompt("Rename {P1} to {END}", "Spanish", style)
+    assert mark in text and other not in text and "{START}" not in text
+    assert "Rename {P1} to {END}" in text and "Use Spanish in `Thought` part." in text
+    assert mark in grounding_prompt("Click OK", style)
+    with pytest.raises(ValueError):
+        computer_prompt("x", style="xml")
+
+
+def test_claude_brain_without_its_package_says_how_to_install(monkeypatch):
+    import sys as _sys
+
+    from leanwatch.brains import make_brain
+
+    monkeypatch.setitem(_sys.modules, "anthropic", None)
+    monkeypatch.delitem(_sys.modules, "leanwatch.brain", raising=False)
+    cfg = Config()
+    cfg.brain = "claude"
+    with pytest.raises(RuntimeError, match="requirements-claude.txt"):
+        make_brain(cfg, None, None, threading.Event())

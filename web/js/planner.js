@@ -6,8 +6,8 @@
       on/off and direction words.
    3. Planning: the chosen skill turns slots into a list of cursor steps,
       each with a plain-language explanation.
-   On a real computer the local agent replaces all of this with Claude's
-   computer-use toolset, which reads screenshots instead of known targets. */
+   On a real computer the local agent replaces all of this with an open
+   vision-language model that reads screenshots instead of known targets. */
 (function () {
   "use strict";
   const LW = window.LW;

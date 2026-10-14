@@ -1,8 +1,18 @@
-# LeanWatch local agent
-anthropic>=1.13       # Claude API (computer-use toolset)
+# LeanWatch local agent. Everything runs on your computer; no API key needed.
 aiohttp>=3.9          # local web server + WebSocket bridge
 mss>=9.0              # fast screenshots
 pillow>=10.0          # resizing and encoding screenshots
 pyautogui>=0.9.54     # moves the real mouse and keyboard
+
+# The open vision-language model that decides what to click (default brain).
+# For an NVIDIA GPU, install the CUDA build of torch first: https://pytorch.org/get-started/locally/
+torch>=2.4
+torchvision>=0.19
+transformers>=5.2     # Qwen2.5-VL / UI-TARS-1.5 and Qwen3-VL support
+accelerate>=1.0       # device_map="auto" (spreads the model over GPU and CPU memory)
+peft>=0.14            # loads LoRA adapters from training/train_sft.py
+# Optional, NVIDIA only: 4-bit loading with --4bit (a 7B model in about 6 GB of VRAM)
+#   pip install bitsandbytes
+
 # The floating command box (overlay.py) uses tkinter, which ships with most
 # Python installers. On Debian/Ubuntu: sudo apt install python3-tk
