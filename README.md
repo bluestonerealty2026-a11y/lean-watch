@@ -8,7 +8,7 @@ The project has two parts:
 
 | Part | What it does | Needs |
 | --- | --- | --- |
-| `web/` control center | Command box in the bottom-right corner, permission screen, step-by-step notes, a **practice computer** with five apps, build-progress tracker | Just a browser. Open `web/index.html`. |
+| `web/` control center | Command box in the bottom-right corner, permission screen, step-by-step notes, a **practice computer** with five apps, build-progress tracker | Just a browser: https://bluestonerealty2026-a11y.github.io/lean-watch/ or `web/index.html` |
 | `agent/` local agent | Controls your **real** mouse and keyboard with Claude's computer-use toolset, serves the control center, and adds an always-on-top command box to every screen | Python 3.10+, a Claude API key |
 
 ## Try it in your browser
@@ -96,7 +96,7 @@ npm install && npm test                                               # 26 brows
 
 ## Publishing
 
-`.github/workflows/static.yml` publishes the `web/` folder to GitHub Pages on every push to the branch. It first serves the exact files under `/lean-watch/` and runs the browser smoke test against them, so a broken page is never deployed. In the repository's Settings → Pages, **Source** must be **GitHub Actions**.
+`.github/workflows/static.yml` publishes the `web/` folder to GitHub Pages on every push to `claude/bold-bell-tq6s9b` (the default branch; add others to `on.push.branches`). It first serves the exact files under `/lean-watch/` and runs the browser smoke test against them, so a broken page is never deployed. In the repository's Settings → Pages, **Source** must be **GitHub Actions**.
 
 ## Roadmap
 

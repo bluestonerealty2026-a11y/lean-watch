@@ -35,6 +35,7 @@
     const v = t.dataset.view;
     try { history.replaceState(null, "", `#${v}`); } catch { /* sandboxed */ }
     showView(v);
+    window.scrollTo(0, 0);
   }));
   window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
   showView(location.hash.slice(1));
@@ -217,10 +218,12 @@
         h("div.callout__actions", {}, ...actions)));
       setRunState("done", "Done");
       setCmdStatus(out.mode === "practice" ? "Nicely done." : "Done. Press Now you try to practise it.");
+      slot.scrollIntoView({ block: "nearest", behavior: "smooth" });
     } else {
       slot.replaceChildren(h("div.callout.callout--warn", {}, h("strong", {}, out.message), actions.length ? h("div.callout__actions", {}, ...actions) : null));
       setRunState(out.reason === "stopped" ? "stop" : "warn", out.reason === "stopped" ? "Stopped" : out.reason === "declined" ? "Skipped" : "Didn't finish");
       setCmdStatus(out.message);
+      slot.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   });
   let currentPlan = null;
@@ -363,7 +366,7 @@
     $("stage-hint").textContent = device
       ? "What the local agent sees on your real screen. The pointer moves on your computer, not here."
       : "A safe pretend computer. Nothing here touches your real files.";
-    input.placeholder = device ? "What should I do on your computer?" : "What should I do? e.g. turn on dark mode";
+    input.placeholder = device ? "e.g. open the calculator" : "e.g. turn on dark mode";
     updatePills();
     if (device) {
       if (bridge.blocker) renderDeviceHelp(null);
@@ -497,6 +500,7 @@
     slot.replaceChildren(h("div.callout", { class: `callout ${m.ok ? "callout--ok" : "callout--warn"}` }, h("strong", {}, m.ok ? "Done." : "Stopped."), m.message ? h("p", {}, m.message) : null));
     setRunState(m.ok ? "done" : "stop", m.ok ? "Done" : "Stopped");
     setCmdStatus(m.ok ? "Done." : m.message || "Stopped.");
+    slot.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
   bridge.on("error", (m) => { logLine("error", m.message); setCmdStatus(m.message); });
 

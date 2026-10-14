@@ -30,8 +30,10 @@ function check(name, ok, detail = "") {
 }
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
 const errors = [];
+
+async function scenario() {
+const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
 page.on("pageerror", (e) => errors.push(String(e)));
 page.on("console", (m) => { if (m.type() === "error" && !/fonts\.(googleapis|gstatic)/.test(m.text())) errors.push(m.text()); });
 
@@ -145,6 +147,13 @@ const overflow = await page.evaluate(() => document.documentElement.scrollWidth 
 check("no horizontal scroll at 390px", overflow <= 0, `${overflow}px`);
 if (shots) await page.screenshot({ path: path.join(shots, "5-phone.png"), fullPage: true });
 
+}
+
+try {
+  await scenario();
+} catch (err) {
+  check("scenario ran to the end", false, String(err.message || err).split("\n")[0]);
+}
 check("no console or page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
 await browser.close();
 

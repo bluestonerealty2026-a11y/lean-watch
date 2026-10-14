@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Assemble the site from web/
         run: |
@@ -41,13 +41,13 @@ jobs:
           HTML
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
       - name: Install Playwright and Chromium
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
       - name: Smoke test the site as it will be served
@@ -58,11 +58,15 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/lean-watch/ > /dev/null && break; sleep 0.5; done
           LEANWATCH_URL=http://127.0.0.1:8080/lean-watch/ npm test
 
+      - name: Show the test server log
+        if: failure()
+        run: cat /tmp/http.log || true
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload site
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
