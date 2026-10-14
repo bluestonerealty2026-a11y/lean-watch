@@ -13,7 +13,7 @@ The project has two parts:
 
 ## Try it in your browser
 
-Open `web/index.html` (double-click it). Nothing to install.
+Live: **https://bluestonerealty2026-a11y.github.io/lean-watch/**. Or open `web/index.html` (double-click it). Nothing to install.
 
 1. Type a task in the box at the bottom right, or pick an example: *Turn on dark mode*, *Make my photo black and white*, *Rotate the cube 45 degrees*, *Create a folder called Homework using the terminal*.
 2. Click **Allow** on the permission screen.
@@ -93,6 +93,10 @@ agent/leanwatch/
 cd agent && pip install -r requirements-dev.txt && python -m pytest   # 63 tests, no API key or display needed
 npm install && npm test                                               # 26 browser checks on the practice screen
 ```
+
+## Publishing
+
+`.github/workflows/static.yml` publishes the `web/` folder to GitHub Pages on every push to the branch. It first serves the exact files under `/lean-watch/` and runs the browser smoke test against them, so a broken page is never deployed. In the repository's Settings → Pages, **Source** must be **GitHub Actions**.
 
 ## Roadmap
 

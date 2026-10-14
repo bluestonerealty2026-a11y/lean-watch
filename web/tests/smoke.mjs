@@ -6,7 +6,8 @@
 //   npm install            (installs Playwright)
 //   npm test               (or: node web/tests/smoke.mjs)
 //
-// Set SHOTS=some/dir to also save screenshots.
+// Set SHOTS=some/dir to also save screenshots, and LEANWATCH_URL to test a
+// served copy instead of the local file.
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -16,7 +17,8 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pageUrl = pathToFileURL(path.resolve(here, "..", "index.html")).href;
+// LEANWATCH_URL tests a served copy (e.g. the GitHub Pages build); otherwise open the file directly.
+const pageUrl = process.env.LEANWATCH_URL || pathToFileURL(path.resolve(here, "..", "index.html")).href;
 const shots = process.env.SHOTS;
 if (shots) fs.mkdirSync(shots, { recursive: true });
 

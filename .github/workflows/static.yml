@@ -1,43 +1,78 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+# Publishes the LeanWatch control center (the web/ folder) to GitHub Pages.
+# The site root is web/index.html, so https://<user>.github.io/lean-watch/ opens the app.
+# Every deploy first runs the browser smoke test against the exact files being published.
+name: Deploy LeanWatch to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
     branches: ["claude/bold-bell-tq6s9b"]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+# One deployment at a time; let a running deployment finish.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble the site from web/
+        run: |
+          mkdir -p _site
+          cp -r web/index.html web/css web/js _site/
+          # Old links to /lean-watch/web/ keep working.
+          mkdir -p _site/web
+          cat > _site/web/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>LeanWatch</title>
+          <meta http-equiv="refresh" content="0; url=../">
+          <script>location.replace("../" + location.hash)</script>
+          <a href="../">LeanWatch has moved. Open it here.</a>
+          HTML
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Smoke test the site as it will be served
+        run: |
+          mkdir -p /tmp/pages
+          cp -r _site /tmp/pages/lean-watch
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory /tmp/pages > /tmp/http.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/lean-watch/ > /dev/null && break; sleep 0.5; done
+          LEANWATCH_URL=http://127.0.0.1:8080/lean-watch/ npm test
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
   deploy:
+    needs: build
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Upload entire repository
-          path: '.'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
