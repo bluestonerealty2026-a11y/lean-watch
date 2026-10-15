@@ -48,6 +48,7 @@ def test_shortcut_taken_by_another_program_is_reported():
         time.sleep(1)
         r = subprocess.run([sys.executable, "-c", code], env={**os.environ, "DISPLAY": ":93"},
                            capture_output=True, text=True, timeout=30)
-        assert r.stdout.split() == ["True", "True", "True"], r.stdout + r.stderr
+        # python-xlib prints a warning line when the X server has no authority entry (as here): skip it
+        assert r.stdout.strip().splitlines()[-1].split() == ["True", "True", "True"], r.stdout + r.stderr
     finally:
         xvfb.terminate()
