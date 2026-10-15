@@ -70,10 +70,15 @@ def image_block(b64_png: str) -> dict:
 
 
 class ScreenCapture:
-    """Captures the primary monitor with mss and scales it for the model."""
+    """Captures the primary monitor with mss and scales it for the model.
 
-    def __init__(self, geometry: Geometry):
+    `shield` (optional, from the desktop bubble) has a cloak() context manager that keeps
+    LeanWatch's own windows out of the picture, so the model never sees or clicks them.
+    """
+
+    def __init__(self, geometry: Geometry, shield=None):
         self.geometry = geometry
+        self.shield = shield
         self._sct = None
         self.last_image = None  # last scaled screenshot, for previews
 
@@ -84,7 +89,11 @@ class ScreenCapture:
         if self._sct is None:
             self._sct = mss.mss()
         mon = self._sct.monitors[1]
-        raw = self._sct.grab(mon)
+        if self.shield is not None:
+            with self.shield.cloak():
+                raw = self._sct.grab(mon)
+        else:
+            raw = self._sct.grab(mon)
         return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
     def screenshot(self):

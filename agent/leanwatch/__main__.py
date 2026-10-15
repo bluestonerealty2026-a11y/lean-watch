@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import threading
 
 from .config import Config
+from .native import DEFAULT_HOTKEY
 
 
 def main(argv: list[str] | None = None) -> None:
     cfg = Config()
     p = argparse.ArgumentParser(
         prog="python -m leanwatch",
-        description="Let an AI model move your mouse and keyboard while you watch and learn.",
+        description="Let an AI model move your mouse and keyboard while you watch and learn. "
+                    "Starts a floating bubble that stays on top of every app: click it and type what you need.",
     )
     p.add_argument("--port", type=int, default=cfg.port, help=f"local port (default {cfg.port})")
-    p.add_argument("--no-browser", action="store_true", help="don't open the control center page")
-    p.add_argument("--overlay", action="store_true", help="also show the floating command box in the screen corner")
+    p.add_argument("--web", action="store_true", help="also open the web control center in your browser")
+    p.add_argument("--no-bubble", action="store_true", help="no floating bubble: use the web control center only")
+    p.add_argument("--no-browser", action="store_true", help="with --no-bubble: don't open the browser")
+    p.add_argument("--overlay", action="store_true", help=argparse.SUPPRESS)   # old name; the bubble is now the default
+    p.add_argument("--hotkey", default=DEFAULT_HOTKEY, help=f"keyboard shortcut that opens the box from anywhere (default {DEFAULT_HOTKEY}; 'none' to turn off)")
+    p.add_argument("--autostart", choices=["on", "off"], help="start LeanWatch (with the other options you give) every time you log in, or stop doing that")
+    p.add_argument("--preload", action="store_true", help="load the model at start-up instead of on the first task")
     p.add_argument("--dry-run", action="store_true", help="plan and narrate, but never move the mouse or press keys")
     p.add_argument("--brain", default=cfg.brain, choices=["local", "claude"], help="local: open model on this computer (default); claude: Claude API, needs a key")
     p.add_argument("--model", help=f"local brain: Hugging Face id or folder of your fine-tuned model (default {cfg.local_model}); claude brain: model id")
@@ -33,7 +41,6 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
 
     cfg.port = args.port
-    cfg.open_browser = not args.no_browser
     cfg.dry_run = args.dry_run
     cfg.brain = args.brain
     if args.model:
@@ -65,14 +72,50 @@ def main(argv: list[str] | None = None) -> None:
     cfg.language = args.language
     cfg.effort = args.effort
     cfg.move_speed = args.speed
+    cfg.preload = args.preload
+
+    if args.autostart:
+        from .autostart import Autostart
+
+        auto = Autostart()
+        if args.autostart == "off":
+            print(auto.remove())
+        else:
+            keep = [a for a in (argv if argv is not None else sys.argv[1:])]
+            print(auto.install(strip_option(keep, "--autostart", takes_value=True)))
+        return
 
     if args.cli:
         run_cli(cfg, args.cli)
         return
 
-    from .server import serve
+    if args.no_bubble:
+        from .server import serve
 
-    serve(cfg, overlay=args.overlay)
+        cfg.open_browser = not args.no_browser
+        serve(cfg)
+        return
+
+    from .desktop import run
+
+    hotkey = None if args.hotkey.strip().lower() in ("", "none", "off") else args.hotkey
+    raise SystemExit(run(cfg, web_page=args.web, hotkey=hotkey))
+
+
+def strip_option(argv: list[str], name: str, takes_value: bool = False) -> list[str]:
+    """Remove `--name value` / `--name=value` from an argument list."""
+    out, skip = [], False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == name:
+            skip = takes_value
+            continue
+        if a.startswith(name + "="):
+            continue
+        out.append(a)
+    return out
 
 
 def run_cli(cfg: Config, task: str) -> None:

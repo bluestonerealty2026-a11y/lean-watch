@@ -249,6 +249,7 @@ class Controller:
         confirm: Callable[[str, str], bool] | None = None,
         stop: threading.Event | None = None,
         platform: str = sys.platform,
+        shield=None,
     ) -> None:
         self.backend = backend
         self.capture = capture
@@ -259,6 +260,8 @@ class Controller:
         self.confirm = confirm or (lambda action, reason: False)
         self.stop = stop or threading.Event()
         self.platform = platform
+        # The desktop bubble: clear_of(points) moves LeanWatch's windows out of the way of a click.
+        self.shield = shield
         self._expected: tuple[int, int] | None = None
 
     # ---------------- helpers ----------------
@@ -324,7 +327,30 @@ class Controller:
                 raise EmergencyStop("The mouse was pushed into a screen corner, so everything stopped (fail-safe).") from err
             raise
 
+    def _targets(self, name: str, inp: dict) -> list[tuple[int, int]]:
+        """Screen points a pointer action will press on (not the path it travels)."""
+        pts = []
+        for key in ("start_coordinate", "coordinate"):
+            if name in ("mouse_move", "zoom", "cursor_position", "screenshot"):
+                break
+            if inp.get(key) is not None:
+                try:
+                    pts.append(self._point(inp[key]))
+                except ValueError:
+                    pass
+        if not pts and name in ("left_click", "right_click", "middle_click", "double_click", "triple_click",
+                                "scroll", "left_mouse_down", "left_mouse_up"):
+            pts.append(self.backend.position())
+        return pts
+
     def _execute(self, name: str, inp: dict):
+        points = self._targets(name, inp) if self.shield is not None else []
+        if points:
+            with self.shield.clear_of(points):
+                return self._execute_now(name, inp)
+        return self._execute_now(name, inp)
+
+    def _execute_now(self, name: str, inp: dict):
         b = self.backend
         if name == "screenshot":
             return self.screenshot_block()

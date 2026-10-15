@@ -29,6 +29,7 @@ class Config:
     style: str = field(default_factory=lambda: _env("STYLE", "box"))                     # how points are written: box or point
     local_max_pixels: int | None = None   # cap on image size the model sees; None keeps the model's own setting
     max_new_tokens: int = 512
+    preload: bool = False                 # load the model at start-up instead of on the first task
     history_images: int = 3               # screenshots kept in the conversation
     language: str = "English"             # language of the explanations
 

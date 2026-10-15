@@ -133,14 +133,14 @@ def test_cli_reads_settings_from_adapter(tmp_path, monkeypatch):
     import leanwatch.__main__ as entry
     import leanwatch.server as server
 
-    monkeypatch.setattr(server, "serve", lambda cfg, overlay=False: seen.append(cfg))
-    entry.main(["--adapter", str(run), "--no-browser"])
+    monkeypatch.setattr(server, "serve", lambda cfg: seen.append(cfg))
+    entry.main(["--adapter", str(run), "--no-bubble", "--no-browser"])
     cfg = seen[-1]
     assert (cfg.local_model, cfg.coords, cfg.style, cfg.local_max_pixels, cfg.history_images) == \
         ("some/base", "rel1000", "point", 12345, 2)
 
     # Flags still win over the saved settings.
-    entry.main(["--adapter", str(run), "--no-browser", "--style", "box", "--max-pixels", "999999", "--model", "other/model"])
+    entry.main(["--adapter", str(run), "--no-bubble", "--no-browser", "--style", "box", "--max-pixels", "999999", "--model", "other/model"])
     cfg = seen[-1]
     assert (cfg.local_model, cfg.style, cfg.local_max_pixels, cfg.coords) == ("other/model", "box", 999999, "rel1000")
 
@@ -148,6 +148,6 @@ def test_cli_reads_settings_from_adapter(tmp_path, monkeypatch):
     merged = tmp_path / "merged"
     merged.mkdir()
     (merged / "leanwatch.json").write_text(json.dumps({"coords": "abs", "style": "point", "max_pixels": 777}))
-    entry.main(["--model", str(merged), "--no-browser"])
+    entry.main(["--model", str(merged), "--no-bubble", "--no-browser"])
     cfg = seen[-1]
     assert (cfg.local_model, cfg.style, cfg.local_max_pixels) == (str(merged), "point", 777)

@@ -15,8 +15,6 @@ import hmac
 import json
 import os
 import secrets
-import subprocess
-import sys
 import threading
 import uuid
 import webbrowser
@@ -63,7 +61,12 @@ class Session(Hooks):
         self.pending: dict[str, dict] = {}
         self.last_narration = ""
         self.controller: Controller | None = None
-        self.local_model = None  # loaded on the first task, then kept
+        self.local_model = None  # loaded on the first task (or by --preload), then kept
+        self._model_lock = threading.Lock()
+        # In-process listeners (the desktop bubble). Called from any thread with every event.
+        self.listeners: list = []
+        # Set by the desktop bubble so it never shows up in the model's screenshots or under its clicks.
+        self.shield = None
         self.screen_size, self.screen_error = self._probe_screen()
 
     # ---------------- setup ----------------
@@ -100,10 +103,18 @@ class Session(Hooks):
         }
 
     def emit(self, msg: dict) -> None:
-        """Send to every page. Safe to call from any thread."""
-        if self.loop is None or self.loop.is_closed():
+        """Send to every page and in-process listener. Safe to call from any thread."""
+        for listener in list(self.listeners):
+            try:
+                listener(msg)
+            except Exception:
+                pass  # a broken listener must never stop a run
+        if self.loop is None or self.loop.is_closed() or not self.clients:
             return
-        self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._broadcast(msg)))
+        try:
+            self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._broadcast(msg)))
+        except RuntimeError:  # the server loop closed between the check and the call
+            pass
 
     async def _broadcast(self, msg: dict) -> None:
         data = json.dumps(msg)
@@ -174,16 +185,16 @@ class Session(Hooks):
             backend = self._make_backend()
             w, h = backend.size()
             geometry = Geometry.for_screen(w, h, self.cfg.screenshot_long_edge, self.cfg.screenshot_max_pixels)
-            capture = ScreenCapture(geometry)  # created in this thread: mss handles are per-thread on Windows
+            # Created in this thread: mss handles are per-thread on Windows.
+            capture = ScreenCapture(geometry, shield=self.shield)
             self.controller = Controller(
                 backend, capture, geometry, self.permissions,
                 speed=self.cfg.move_speed, takeover_px=self.cfg.takeover_tolerance_px,
-                confirm=self.confirm, stop=self.stop_event,
+                confirm=self.confirm, stop=self.stop_event, shield=self.shield,
             )
             self.preview()
-            if self.cfg.brain == "local" and self.local_model is None:
-                self.narrate(f"Loading {self.cfg.local_model}. The first time this downloads several GB and can take a few minutes.", "thinking")
-                self.local_model = load_local_model(self.cfg)
+            if self.cfg.brain == "local":
+                self.ensure_model()
             brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=self.local_model)
             result = brain.run(text)
         except Exception as err:
@@ -195,8 +206,17 @@ class Session(Hooks):
                 p["event"].set()
         if result.ok and result.message:
             self.narrate(result.message, "final")
-        self.emit({"type": "run_finished", "ok": result.ok, "message": result.message if not result.ok else ""})
+        self.emit({"type": "run_finished", "ok": result.ok, "message": result.message if not result.ok else "",
+                   "result": result.message})
         self.emit(self.status())
+
+    def ensure_model(self):
+        """Load the local model once, even if a task and --preload ask at the same time."""
+        with self._model_lock:
+            if self.local_model is None:
+                self.narrate(f"Loading {self.cfg.local_model}. The first time this downloads several GB and can take a few minutes.", "thinking")
+                self.local_model = load_local_model(self.cfg)
+            return self.local_model
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -221,8 +241,8 @@ class Session(Hooks):
 
     def preview(self) -> None:
         c = self.controller
-        if c is None or c.capture is None:
-            return
+        if c is None or c.capture is None or not self.clients:
+            return  # previews are only for the web page; skip the extra screenshot when no page is open
         try:
             img = c.capture.screenshot()
             fx, fy = c.cursor_fraction()
@@ -347,7 +367,8 @@ def write_session_file(cfg: Config, token: str) -> Path:
     return path
 
 
-def serve(cfg: Config, overlay: bool = False) -> None:
+def serve(cfg: Config) -> None:
+    """Web-only mode (--no-bubble): the control center page in your browser."""
     token = secrets.token_urlsafe(24)
     session_path = write_session_file(cfg, token)
     url = f"http://127.0.0.1:{cfg.port}/?token={token}"
@@ -369,8 +390,6 @@ def serve(cfg: Config, overlay: bool = False) -> None:
     async def after_start(_app):
         if cfg.open_browser:
             webbrowser.open(url)
-        if overlay:
-            subprocess.Popen([sys.executable, "-m", "leanwatch.overlay"], cwd=str(Path(__file__).resolve().parents[1]))
 
     async def cleanup(_app):
         try:
