@@ -44,7 +44,8 @@ def launcher_source(args: list[str], agent_dir: Path = AGENT_DIR) -> str:
         f"sys.path.insert(0, {str(agent_dir)!r})\n"
         f"sys.argv = ['leanwatch'] + {list(args)!r}\n"
         "from leanwatch.__main__ import main\n"
-        "main()\n"
+        "if __name__ == '__main__':   # the model's process re-runs this file and must not start LeanWatch again\n"
+        "    main()\n"
     )
 
 

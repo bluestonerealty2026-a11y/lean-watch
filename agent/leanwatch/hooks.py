@@ -7,10 +7,7 @@ import threading
 from dataclasses import dataclass
 
 from .controller import Controller, UserTookOver, describe
-
-
-class Stopped(Exception):
-    """The user pressed Stop."""
+from .errors import Stopped  # noqa: F401  (defined there so model_process.py can raise it without the controller)
 
 
 class Hooks:

@@ -22,6 +22,7 @@ def test_linux_desktop_entry(tmp_path):
     assert "Terminal=false" in text and str(entry) in msg
     launcher = (tmp_path / ".leanwatch" / "start_leanwatch.py").read_text()
     assert "['leanwatch'] + ['--4bit', '--adapter', '/runs/my model']" in launcher
+    assert "if __name__ == '__main__':" in launcher        # the model's process re-runs it: start nothing there
     compile(launcher, "launcher", "exec")
     assert a.is_installed()
     assert "no longer" in a.remove()
@@ -174,3 +175,5 @@ def test_check_report_runs_here(capsys):
     code = report(Config())
     out = capsys.readouterr().out
     assert code in (0, 1) and "Start LeanWatch with" in out
+    # The real AI-library check, in a fresh Python like the model's own process.
+    assert "Checking the AI libraries" in out and "OK   AI libraries: torch " in out

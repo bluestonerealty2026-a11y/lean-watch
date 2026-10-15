@@ -8,12 +8,17 @@ import sys
 import threading
 
 from .config import Config
+from .memory import SMALL_MODEL
 from .native import DEFAULT_HOTKEY
-
-SMALL_MODEL = "ByteDance-Seed/UI-TARS-2B-SFT"
 
 
 def main(argv: list[str] | None = None) -> None:
+    import multiprocessing
+
+    if getattr(multiprocessing.current_process(), "_inheriting", False):
+        # The model's process is starting: "spawn" re-runs the script that started LeanWatch (like the login
+        # launcher, if it is an older one without a __main__ check). Start nothing here.
+        return
     cfg = Config()
     p = argparse.ArgumentParser(
         prog="python -m leanwatch",
@@ -36,7 +41,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--4bit", dest="load_in_4bit", action="store_true", default=cfg.load_in_4bit, help="load the local model in 4-bit (NVIDIA GPU, needs bitsandbytes)")
     p.add_argument("--device", default=cfg.device, choices=["auto", "cuda", "mps", "cpu"])
     p.add_argument("--coords", default=None, choices=["auto", "abs", "rel1000"], help="how the model writes points: abs (Qwen2.5-VL, UI-TARS-1.5) or rel1000 (Qwen2-VL, UI-TARS 2B, Qwen3-VL). Default: worked out from the model")
-    p.add_argument("--small", action="store_true", help=f"use the small model ({SMALL_MODEL}, about 9 GB of memory on a CPU) for laptops without a big GPU")
+    p.add_argument("--small", action="store_true", help=f"use the small model ({SMALL_MODEL}, about 6 GB of memory on a CPU) for laptops without a big GPU")
+    p.add_argument("--cpu-dtype", default=cfg.cpu_dtype, choices=["auto", "float32", "bfloat16"], help="weight precision on a CPU: auto (32-bit if it fits in memory, else 16-bit; default), float32 or bfloat16 (half the memory)")
     p.add_argument("--check", action="store_true", help="check whether this computer is ready (screen, libraries, GPU, memory) and which model fits, then exit")
     p.add_argument("--style", default=None, choices=["box", "point"], help="how points are written in the prompt: box (start_box=..., default) or point (point='<point>x y</point>'). Read from the adapter when you pass one")
     p.add_argument("--max-pixels", type=int, default=cfg.local_max_pixels, help="largest screenshot size, in pixels, the local model sees")
@@ -73,6 +79,7 @@ def main(argv: list[str] | None = None) -> None:
         cfg.local_max_pixels = trained.get("max_pixels", cfg.local_max_pixels)
     cfg.load_in_4bit = args.load_in_4bit
     cfg.device = args.device
+    cfg.cpu_dtype = args.cpu_dtype
     if args.coords:
         cfg.coords = args.coords
     if args.style:
@@ -148,6 +155,7 @@ def strip_option(argv: list[str], name: str, takes_value: bool = False) -> list[
 
 def run_cli(cfg: Config, task: str) -> None:
     from .brains import make_brain
+    from .errors import ModelError
     from .hooks import ConsoleHooks
     from .controller import Controller, DryRunBackend, PyAutoGuiBackend
     from .permissions import Permissions
@@ -177,6 +185,9 @@ def run_cli(cfg: Config, task: str) -> None:
     except KeyboardInterrupt:
         stop.set()
         print("\nStopped.")
+        return
+    except ModelError as err:          # explained already; the traceback is printed above
+        print(f"\n✕ {err}")
         return
     print(("\n✓ " if result.ok else "\n✕ ") + result.message)
 

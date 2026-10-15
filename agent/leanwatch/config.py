@@ -29,6 +29,11 @@ class Config:
     # (0-1000: Qwen2-VL, UI-TARS-2B/7B v1, Qwen3-VL), or "auto" = read it from the model's architecture.
     coords: str = field(default_factory=lambda: _env("COORDS", "auto"))
     style: str = field(default_factory=lambda: _env("STYLE", "box"))                     # how points are written: box or point
+    # Weight precision on a CPU: "auto" (32-bit when it fits in memory, else 16-bit), "float32" or "bfloat16".
+    cpu_dtype: str = field(default_factory=lambda: _env("CPU_DTYPE", "auto"))
+    # Run the model in its own process, so a failed import or running out of memory can't take the bubble down.
+    # LEANWATCH_MODEL_PROCESS=0 loads it in LeanWatch's own process, as older versions did.
+    model_process: bool = field(default_factory=lambda: _env("MODEL_PROCESS", "1") != "0")
     local_max_pixels: int | None = None   # cap on image size the model sees; None keeps the model's own setting
     max_new_tokens: int = 512
     preload: bool = False                 # load the model at start-up instead of on the first task

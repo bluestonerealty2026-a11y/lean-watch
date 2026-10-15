@@ -5,15 +5,16 @@ quickmachotkey>=2025.7; sys_platform == "darwin"        # macOS: the keyboard sh
 python-xlib>=0.33; sys_platform == "linux"             # Linux/X11: keep the bubble on every desktop, hand back focus
 aiohttp>=3.9          # local server for the optional web control center
 mss>=9.0              # fast screenshots
-pillow>=10.0          # resizing and encoding screenshots
+pillow>=10.0.1        # resizing and encoding screenshots (transformers 5 needs 10.0.1 or newer)
 pyautogui>=0.9.54     # moves the real mouse and keyboard
+psutil                # how much memory there is: picks 32- or 16-bit weights, explains out-of-memory
 
 # The open vision-language model that decides what to click (default brain).
 # For an NVIDIA GPU, install the CUDA build of torch first: https://pytorch.org/get-started/locally/
 torch>=2.4
-torchvision>=0.19
+torchvision>=0.19    # the release made for your torch (torch 2.5.1: torchvision 0.20.1); --check tells you
 transformers>=5.2     # Qwen2.5-VL / UI-TARS-1.5 and Qwen3-VL support
-accelerate>=1.0       # device_map="auto" (spreads the model over GPU and CPU memory)
+accelerate>=1.1.0     # device_map="auto"; transformers 5 itself needs 1.1.0 or newer
 peft>=0.14            # loads LoRA adapters from training/train_sft.py
 # Optional, NVIDIA only: 4-bit loading with --4bit (a 7B model in about 6 GB of VRAM)
 #   pip install bitsandbytes
