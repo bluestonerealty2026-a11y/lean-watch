@@ -49,6 +49,16 @@ PANEL_WIDTH = 400
 EDGE = 16              # distance from the screen edge for the default position
 SETTLE_S = 0.15        # how long a hidden window takes to leave the screen image
 
+
+def _on_wayland() -> bool:
+    """LeanWatch uses the Wayland portal for the screen, mouse and keyboard (see wayland.py)."""
+    try:
+        from .wayland import wanted
+
+        return wanted()
+    except Exception:
+        return False
+
 STYLE = f"""
 #card {{ background: {BG}; border: 1px solid {LINE}; border-radius: 16px; }}
 QLabel {{ color: {TEXT}; font-size: 14px; }}
@@ -669,7 +679,7 @@ class BubbleApp(QObject):
         self.session = session
         self.native = native
         self.settings_path = settings_path
-        self.screen_px_size = screen_px_size or getattr(session, "screen_size", None)
+        self._screen_px_size = screen_px_size
         translucent = translucency_ok(native)
         bypass = False
         try:
@@ -687,6 +697,7 @@ class BubbleApp(QObject):
         self.shortcut_ok = False                 # set by desktop.run when the keyboard shortcut works
         self.work_window = None                  # the app the agent was working in when it asked or paused
         self.focus = native.focus_tracker()
+        self.on_wayland = _on_wayland()
 
         self.shield = Shield(self.windows, self._rect_px, wanted=self._wanted, release_keyboard=self._release_keyboard)
         self.session.shield = self.shield
@@ -760,8 +771,26 @@ class BubbleApp(QObject):
 
     def _release_keyboard(self) -> None:
         """Before the agent types: if the LeanWatch box has the keyboard, give it to the app being worked on."""
-        if self.panel.isActiveWindow():
+        if not self.panel.isActiveWindow():
+            return
+        if self.on_wayland:
+            self._step_aside()
+        else:
             self.focus.restore(self.work_window)
+
+    def _step_aside(self) -> None:
+        """Wayland: an app can't give the keyboard to another app. When the box disappears, the desktop
+        gives it back to the window used before; then the box comes back without taking it."""
+        p = self.panel
+        p.hide()
+        end = time.monotonic() + 0.25
+        while time.monotonic() < end:        # let the desktop move the keyboard
+            QApplication.processEvents()
+            time.sleep(0.02)
+        if self._wanted(p):
+            p.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            self._show_window(p)
+            p.setAttribute(Qt.WA_ShowWithoutActivating, False)
 
     def _can_unhide(self) -> bool:
         return self.tray is not None or self.shortcut_ok
@@ -823,6 +852,16 @@ class BubbleApp(QObject):
         """A window's rectangle in the mouse pixels pyautogui uses."""
         native = self.native.window_rect_px(w)
         return native if native is not None else self._to_screen_px(w.frameGeometry())
+
+    @property
+    def screen_px_size(self):
+        """The mouse's coordinate space. Read from the session each time: on Wayland it is only known
+        once the desktop shares the screen (its logical pixels)."""
+        return self._screen_px_size or getattr(self.session, "screen_size", None)
+
+    @screen_px_size.setter
+    def screen_px_size(self, size) -> None:
+        self._screen_px_size = size
 
     def _to_screen_px(self, r: QRect):
         """Qt's logical coordinates -> the mouse pixels pyautogui uses, on the main monitor."""
@@ -927,10 +966,14 @@ class BubbleApp(QObject):
             return
         if not self.session.permissions.granted:
             self.pending_text = text
+            how_to_stop = ("Stop me any time with Stop or Esc, or with your desktop's “stop sharing” button. "
+                           "Your desktop will also ask you to share the screen: turn on “Allow Remote Interaction”."
+                           if self.on_wayland else
+                           "Stop me any time with Stop or Esc, by moving the mouse yourself, or by pushing the mouse "
+                           "into a screen corner.")
             self.panel.consent.ask(
                 "May I use your mouse and keyboard?",
-                "I'll move the pointer, click and type on this computer to show you how it's done. "
-                "Stop me any time with Stop or Esc, by moving the mouse yourself, or by pushing the mouse into a screen corner.")
+                "I'll move the pointer, click and type on this computer to show you how it's done. " + how_to_stop)
             self.panel.refit()
             return
         self._start(text)
@@ -985,6 +1028,9 @@ class BubbleApp(QObject):
     def _on_event(self, msg: dict) -> None:
         kind = msg.get("type")
         p = self.panel
+        if kind == "open_box":
+            self.open_from_hotkey()
+            return
         if kind == "run_started":
             self.running = True
             self.work_window = None

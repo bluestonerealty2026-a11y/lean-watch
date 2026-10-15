@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+import time
 from dataclasses import dataclass
 
 
@@ -74,16 +75,26 @@ class ScreenCapture:
 
     `shield` (optional, from the desktop bubble) has a cloak() context manager that keeps
     LeanWatch's own windows out of the picture, so the model never sees or clicks them.
+    `grab` (optional) replaces mss: grab(since) returns the whole screen as a PIL image, taken after
+    the time.monotonic() value `since` when one is given (Wayland: see wayland.WaylandScreen).
     """
 
-    def __init__(self, geometry: Geometry, shield=None):
+    def __init__(self, geometry: Geometry, shield=None, grab=None):
         self.geometry = geometry
         self.shield = shield
+        self.grab = grab
         self._sct = None
         self.last_image = None  # last scaled screenshot, for previews
 
     def _grab_raw(self):
         from PIL import Image
+
+        if self.grab is not None:
+            if self.shield is None:
+                return self.grab(None)
+            hidden_at = time.monotonic()
+            with self.shield.cloak():
+                return self.grab(hidden_at)
         import mss
 
         if self._sct is None:

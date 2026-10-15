@@ -47,6 +47,43 @@ def _gpu():
     return None, None, None
 
 
+def _wayland_lines(line) -> bool:
+    """Wayland: the screen, mouse and keyboard go through the desktop's portal (see wayland.py)."""
+    from . import wayland
+
+    if not wayland.wanted():
+        line(None, "Wayland session, but LEANWATCH_WAYLAND=0: LeanWatch only reaches older X11 apps.")
+        return True
+    if not wayland.available():
+        line(False, "Wayland needs the jeepney package to ask your desktop for access: pip install jeepney")
+        return False
+    try:
+        versions = wayland.portal_versions()
+    except Exception as err:
+        line(False, f"Can't reach your desktop's portal (xdg-desktop-portal): {err}")
+        return False
+    if "RemoteDesktop" not in versions or "ScreenCast" not in versions:
+        line(False, "Your desktop has no remote desktop portal. On GNOME: sudo apt install xdg-desktop-portal-gnome "
+                    "(KDE: xdg-desktop-portal-kde), then log out and in again.")
+        return False
+    line(True, f"Wayland: screen, mouse and keyboard through your desktop's screen sharing "
+               f"(it asks once; turn on “Allow Remote Interaction”)")
+    python = wayland.find_gst_python()
+    if python:
+        line(True, f"Screen pictures through PipeWire (GStreamer in {python})")
+    else:
+        line(None, "GStreamer's PipeWire plugin isn't available, so LeanWatch takes screenshots instead and the screen "
+                   "flashes each time: sudo apt install gstreamer1.0-pipewire python3-gi gir1.2-gstreamer-1.0")
+    from . import gnome_shortcut
+
+    if gnome_shortcut.available():
+        if gnome_shortcut.installed():
+            line(True, "Keyboard shortcut set up in GNOME's settings")
+        else:
+            line(None, "For a keyboard shortcut that works in every app: python -m leanwatch --shortcut on")
+    return True
+
+
 def report(cfg: Config) -> int:
     ok = True
 
@@ -75,7 +112,7 @@ def report(cfg: Config) -> int:
         from .native import wayland_session
 
         if wayland_session():
-            line(None, "Wayland session: the agent can only see and control X11 apps. Log in to an 'Xorg' session for full control.")
+            ok = _wayland_lines(line) and ok
         elif os.environ.get("DISPLAY"):
             line(True, "X11 session")
         else:

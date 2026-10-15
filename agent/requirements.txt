@@ -3,6 +3,7 @@ PySide6-Essentials>=6.8   # the floating bubble and its command box (Qt)
 pyobjc-framework-Cocoa>=10; sys_platform == "darwin"   # macOS: float over full-screen apps and every Space
 quickmachotkey>=2025.7; sys_platform == "darwin"        # macOS: the keyboard shortcut, without extra permissions
 python-xlib>=0.33; sys_platform == "linux"             # Linux/X11: keep the bubble on every desktop, hand back focus
+jeepney>=0.8; sys_platform == "linux"                  # Linux/Wayland: ask the desktop (portal) for the screen, mouse and keyboard
 aiohttp>=3.9          # local server for the optional web control center
 mss>=9.0              # fast screenshots
 pillow>=10.0          # resizing and encoding screenshots

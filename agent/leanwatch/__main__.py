@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--overlay", action="store_true", help=argparse.SUPPRESS)   # old name; the bubble is now the default
     p.add_argument("--hotkey", default=DEFAULT_HOTKEY, help=f"keyboard shortcut that opens the box from anywhere (default {DEFAULT_HOTKEY}; 'none' to turn off)")
     p.add_argument("--autostart", choices=["on", "off"], help="start LeanWatch (with the other options you give) every time you log in, or stop doing that")
+    p.add_argument("--open", action="store_true", help="open the box of the LeanWatch that is running (for a desktop keyboard shortcut)")
+    p.add_argument("--shortcut", choices=["on", "off"], help="GNOME: add (or remove) a keyboard shortcut in GNOME's settings that opens the box from any app; needed on Wayland")
     p.add_argument("--preload", action="store_true", help="load the model at start-up instead of on the first task")
     p.add_argument("--dry-run", action="store_true", help="plan and narrate, but never move the mouse or press keys")
     p.add_argument("--brain", default=cfg.brain, choices=["local", "claude"], help="local: open model on this computer (default); claude: Claude API, needs a key")
@@ -89,6 +91,24 @@ def main(argv: list[str] | None = None) -> None:
         from .doctor import report
 
         raise SystemExit(report(cfg))
+
+    if args.open:
+        from .open_box import open_box
+
+        raise SystemExit(open_box())
+
+    if args.shortcut:
+        from . import gnome_shortcut
+
+        if args.shortcut == "off":
+            print(gnome_shortcut.remove())
+            return
+        combo = args.hotkey if args.hotkey.strip().lower() not in ("", "none", "off") else DEFAULT_HOTKEY
+        try:
+            print(gnome_shortcut.install(combo))
+        except Exception as err:
+            raise SystemExit(f"Could not add the shortcut: {err}")
+        return
 
     if args.autostart:
         from .autostart import Autostart
@@ -152,22 +172,39 @@ def run_cli(cfg: Config, task: str) -> None:
     from .controller import Controller, DryRunBackend, PyAutoGuiBackend
     from .permissions import Permissions
     from .screen import Geometry, ScreenCapture
+    from . import wayland
 
     print("LeanWatch will move your mouse and type on this computer to do:")
     print(f"  {task}")
-    print("Stop it any time by pushing the mouse into a screen corner, or with Ctrl+C here.")
+    print("Stop it any time with Ctrl+C here, " + ("or by stopping the screen sharing from your desktop."
+                                                  if wayland.wanted() else "or by pushing the mouse into a screen corner."))
     if input("Allow? [y/N] ").strip().lower() not in ("y", "yes"):
         print("Okay, nothing was touched.")
         return
 
-    real = PyAutoGuiBackend()
+    stop = threading.Event()
+    screen = None
+    if wayland.wanted():
+        said = []
+
+        def asking():
+            if not said:
+                said.append(print(wayland.ASK_TEXT))
+
+        if wayland.will_ask():
+            asking()
+        screen = wayland.WaylandScreen(stop=stop, asking=asking)
+        if screen.note:
+            print(screen.note)
+        real = screen.backend
+    else:
+        real = PyAutoGuiBackend()
     backend = DryRunBackend(real.size()) if cfg.dry_run else real
     geometry = Geometry.for_screen(*backend.size(), cfg.screenshot_long_edge, cfg.screenshot_max_pixels)
     perms = Permissions()
     perms.grant(mouse=True, keyboard=True)
     hooks = ConsoleHooks()
-    stop = threading.Event()
-    controller = Controller(backend, ScreenCapture(geometry), geometry, perms,
+    controller = Controller(backend, ScreenCapture(geometry, grab=screen.grab if screen else None), geometry, perms,
                             speed=cfg.move_speed, takeover_px=cfg.takeover_tolerance_px,
                             confirm=hooks.confirm, stop=stop)
     try:
@@ -178,6 +215,9 @@ def run_cli(cfg: Config, task: str) -> None:
         stop.set()
         print("\nStopped.")
         return
+    finally:
+        if screen is not None:
+            screen.close()
     print(("\n✓ " if result.ok else "\n✕ ") + result.message)
 
 

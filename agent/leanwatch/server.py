@@ -151,6 +151,9 @@ class Session(Hooks):
         if kind == "resume":
             self.resume()
             return None
+        if kind == "open":
+            self.emit({"type": "open_box"})     # a desktop keyboard shortcut (python -m leanwatch --open)
+            return None
         if kind == "confirm":
             p = self.pending.get(str(msg.get("id")))
             if p:
@@ -180,13 +183,44 @@ class Session(Hooks):
         self.emit(self.status())
         return None
 
+    def _open_wayland(self):
+        """Wayland: the desktop's remote desktop session for this task (asks the person the first time)."""
+        from . import wayland
+
+        if not wayland.available():
+            raise RuntimeError("On Wayland, LeanWatch needs the jeepney package to ask your desktop for access: "
+                               "pip install jeepney")
+        said = []
+
+        def asking():          # the desktop's dialog is up (first time, or the permission was withdrawn)
+            if not said:
+                said.append(True)
+                self.narrate(wayland.ASK_TEXT, "say")
+
+        if wayland.will_ask():
+            asking()
+        screen = wayland.WaylandScreen(stop=self.stop_event, asking=asking)
+        if screen.note:
+            self.narrate(screen.note, "thinking")
+        self.screen_size = screen.backend.size()
+        return screen
+
     def _worker(self, text: str) -> None:
+        wayland_screen = None
         try:
-            backend = self._make_backend()
+            from . import wayland
+
+            grab = None
+            if wayland.wanted():
+                wayland_screen = self._open_wayland()
+                grab = wayland_screen.grab
+                backend = DryRunBackend(wayland_screen.backend.size()) if self.cfg.dry_run else wayland_screen.backend
+            else:
+                backend = self._make_backend()
             w, h = backend.size()
             geometry = Geometry.for_screen(w, h, self.cfg.screenshot_long_edge, self.cfg.screenshot_max_pixels)
             # Created in this thread: mss handles are per-thread on Windows.
-            capture = ScreenCapture(geometry, shield=self.shield)
+            capture = ScreenCapture(geometry, shield=self.shield, grab=grab)
             self.controller = Controller(
                 backend, capture, geometry, self.permissions,
                 speed=self.cfg.move_speed, takeover_px=self.cfg.takeover_tolerance_px,
@@ -198,8 +232,13 @@ class Session(Hooks):
             brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=self.local_model)
             result = brain.run(text)
         except Exception as err:
-            result = RunResult(False, f"Could not run the task: {err}")
+            if self.stop_event.is_set():
+                result = RunResult(False, "Stopped. You are in control.")
+            else:
+                result = RunResult(False, f"Could not run the task: {err}")
         finally:
+            if wayland_screen is not None:
+                wayland_screen.close()     # ends the screen sharing (the desktop's indicator goes away)
             self.running = False
             self.paused_flag = False
             for p in list(self.pending.values()):
@@ -331,7 +370,7 @@ def make_app(cfg: Config, token: str) -> web.Application:
 
     async def api_post(request: web.Request):
         kind = request.match_info["kind"]
-        if kind not in ("command", "stop", "pause", "resume", "grant", "revoke"):
+        if kind not in ("command", "stop", "pause", "resume", "grant", "revoke", "open"):
             raise web.HTTPNotFound()
         try:
             body = await request.json() if request.can_read_body else {}

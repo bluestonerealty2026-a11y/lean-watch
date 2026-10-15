@@ -52,6 +52,8 @@ The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/
 | `--speed 0.6` | Slower pointer, easier to follow |
 | `--adapter runs/my-model` | Use a model you fine-tuned with `training/train_sft.py` (it remembers its own settings) |
 | `--check` | Check this computer (screen, libraries, GPU, memory) and say which model fits |
+| `--shortcut on` / `off` | GNOME (needed on Wayland): add or remove a keyboard shortcut in GNOME's settings that opens the box from any app |
+| `--open` | Open the box of the running LeanWatch (what that shortcut runs) |
 | `--small` | The 2B model, for laptops without a big GPU |
 | `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`); the coordinate format is worked out from the model |
 | `--device`, `--max-pixels` | Where the model runs (`auto`, `cuda`, `mps`, `cpu`) and the largest screenshot it sees |
@@ -65,7 +67,7 @@ The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/
 
 - **Windows 10/11**: works as is: no permissions to grant. The bubble stays above other windows (not above the Start menu, the lock screen or exclusive-fullscreen games) and on every virtual desktop. On Windows 10 version 2004 or newer it is invisible in screenshots, so the model never sees it. LeanWatch can't control apps that run as administrator, unless it runs as administrator too.
 - **macOS**: allow your terminal (or Python) under System Settings → Privacy & Security → **Accessibility** (to move the mouse and for the shortcut) and **Screen Recording** (to take screenshots), then restart it. Install `pyobjc-framework-Cocoa` (included in `requirements.txt` on macOS) so the bubble floats over full-screen apps and on every Space.
-- **Linux**: works fully in an X11 session (Ubuntu 24.04 "Ubuntu on Xorg", KDE Plasma X11, Xfce, MATE, Cinnamon, …): the bubble stays above everything, including full-screen apps, on every workspace, and the shortcut needs no permissions. Install `libxcb-cursor0` if Qt asks for it. In a Wayland session (Ubuntu 25.10 and newer, Fedora, Plasma 6.8) the bubble still shows, but the agent can only see and control older X11 apps, because Wayland doesn't let one app read the screen or move the mouse for others; log in to an X11 session where your distribution still offers one. If your window manager doesn't run autostart entries (i3, sway, …), `--autostart on` prints the line to add to its config.
+- **Linux**: works in X11 sessions (Xfce, MATE, Cinnamon, KDE Plasma X11, …) and in Wayland sessions (Ubuntu 25.10 and newer, Fedora, GNOME, KDE Plasma 6). On Wayland an app can't read the screen or move the mouse for others, so LeanWatch asks your desktop through its screen-sharing permission (the xdg-desktop-portal remote desktop portal): the first task opens your desktop's own dialog. On GNOME, **turn on “Allow Remote Interaction”, then click Share**; GNOME remembers the answer. While a task runs, the top bar shows that the screen is shared; stopping the sharing there stops LeanWatch. LeanWatch reads the screen through PipeWire with GStreamer from the system's Python (Ubuntu's GNOME has both); without them it falls back to screenshots, which flash the screen. On Wayland, LeanWatch can't notice you moving the mouse, so stop it with Stop, Esc or the sharing indicator. Apps can't grab keys there either: `python -m leanwatch --shortcut on` adds Ctrl+Alt+Space to GNOME's own keyboard shortcuts. Install `libxcb-cursor0` if Qt asks for it. If your window manager doesn't run autostart entries (i3, sway, …), `--autostart on` prints the line to add to its config.
 
 ## Safety
 
@@ -130,6 +132,7 @@ pip install -r agent/requirements-dev.txt -r training/requirements.txt
 (cd training && python -m pytest)       # the whole training pipeline with a tiny model on the CPU
 npm install && npm test                 # 26 browser checks on the practice screen
 LEANWATCH_X11_TESTS=1 python -m pytest agent/tests/x11   # optional, Linux: the real bubble with real clicks (needs Xvfb, openbox, xdotool, xterm)
+LEANWATCH_GNOME_TESTS=1 python -m pytest agent/tests/gnome   # optional, as root in a container: a headless GNOME Shell on Wayland, the real portal dialog and input
 ```
 
 ## Publishing

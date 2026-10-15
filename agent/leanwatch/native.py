@@ -682,8 +682,8 @@ class X11Native(Native):
 
     def notes(self) -> list[str]:
         if wayland_session():
-            return ["Wayland session: LeanWatch can only see and control older X11 apps here (most apps are Wayland "
-                    "now). For full control, log in to an X11 / 'Xorg' session where your distribution still offers one."]
+            return ["Wayland session: LeanWatch sees and controls the screen through your desktop's screen sharing. "
+                    "The first task asks for permission: turn on “Allow Remote Interaction”, then click Share."]
         return []
 
 

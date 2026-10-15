@@ -70,6 +70,15 @@ def _xcb_cursor_available() -> bool:
         return ctypes.util.find_library("xcb-cursor") is not None
 
 
+def gnome_shortcut_installed() -> bool:
+    try:
+        from .gnome_shortcut import installed
+
+        return installed()
+    except Exception:
+        return False
+
+
 def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY) -> int:
     from .native import enable_dpi_awareness
 
@@ -130,15 +139,24 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
             stop_hotkey = native.register_hotkey(hotkey, bubble.hotkey_pressed.emit)
         except Exception as err:
             print(f"  Shortcut {hotkey} is not available: {err}")
-    bubble.shortcut_ok = stop_hotkey is not None   # decides whether "Hide the bubble" is safe to offer
+    # On Wayland our key grab only sees keys while an X11 window is in front; a shortcut in GNOME's
+    # own settings (python -m leanwatch --shortcut on) works in every app.
+    from . import wayland
+
+    on_wayland = wayland.wanted()
+    shortcut_works = gnome_shortcut_installed() if on_wayland else stop_hotkey is not None
+    bubble.shortcut_ok = shortcut_works            # decides whether "Hide the bubble" is safe to offer
     bubble.show()
 
     pretty = "+".join(p.capitalize() for p in hotkey.split("+")) if hotkey else ""
     print("LeanWatch is ready.")
-    print("  Click the teal bubble" + (f" or press {pretty}" if stop_hotkey else "") + " and tell me what you need.")
+    print("  Click the teal bubble" + (f" or press {pretty}" if hotkey and shortcut_works else "")
+          + " and tell me what you need.")
+    if on_wayland and not shortcut_works:
+        print("  For a keyboard shortcut that works in every app on Wayland, run once:  python -m leanwatch --shortcut on")
     print(f"  Brain: {'local open model' if cfg.brain == 'local' else 'Claude API'}: {model_name(cfg)}"
           + ("   DRY RUN: the mouse will not move" if cfg.dry_run else ""))
-    if hotkey and not stop_hotkey:
+    if hotkey and not stop_hotkey and not on_wayland:
         print(f"  (The shortcut {pretty} could not be set up on this computer; the bubble still works.)")
     for note in native.notes():
         print(f"  Note: {note}")
