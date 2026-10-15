@@ -31,6 +31,12 @@ APPROVAL_TURNS = 2
 END_MARKERS = ("<|im_end|>", "<|endoftext|>", "</s>", "<|end_of_text|>", "<|eot_id|>")
 
 
+def coords_for(model_type: str) -> str:
+    """How a model family writes points. Qwen2.5-VL (UI-TARS-1.5) uses pixels of the image it saw;
+    Qwen2-VL (UI-TARS 2B/7B v1) and Qwen3-VL use a 0-1000 grid (see UI-TARS' own action_parser.py)."""
+    return "abs" if model_type in ("qwen2_5_vl", "qwen2_5_vl_text") else "rel1000"
+
+
 def describe_step(thought: str, action) -> str:
     """The question shown before a risky step: the model's explanation plus exactly what will be typed or pressed."""
     detail = ""
@@ -130,6 +136,7 @@ class LocalModel:
             self.model.to("mps" if (mps and device != "cpu") else "cpu")
         self.model.eval()
         self.patch = getattr(self.processor.image_processor, "patch_size", 14)
+        self.coords = coords_for(getattr(self.model.config, "model_type", ""))
 
     def answer(self, messages: list[dict], images: list, stop: threading.Event | None = None) -> ModelAnswer:
         import torch
@@ -215,7 +222,8 @@ class LocalBrain:
         """Carry out this turn's actions. Returns (result if the task ended, note for the next turn)."""
         g = self.controller.g
         sx, sy = g.shot_w / answer.image_w, g.shot_h / answer.image_h
-        if self.cfg.coords == "rel1000":
+        coords = self.cfg.coords if self.cfg.coords != "auto" else getattr(self.model, "coords", "abs")
+        if coords == "rel1000":
             sx, sy = g.shot_w / 1000, g.shot_h / 1000
 
         def at(p):

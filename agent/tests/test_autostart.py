@@ -149,3 +149,28 @@ def test_launcher_is_utf8_and_paths_are_absolute(tmp_path, monkeypatch):
 def test_abbreviated_autostart_option_is_refused(tmp_path):
     with pytest.raises(SystemExit):
         main(["--auto", "on"])
+
+
+def test_small_switch_and_check(monkeypatch):
+    import leanwatch.doctor as doctor
+    import leanwatch.server as server
+
+    seen = []
+    monkeypatch.setattr(server, "serve", lambda cfg: seen.append(cfg))
+    main(["--small", "--no-bubble", "--no-browser"])
+    assert seen[-1].local_model == "ByteDance-Seed/UI-TARS-2B-SFT"
+    main(["--small", "--model", "my/model", "--no-bubble", "--no-browser"])
+    assert seen[-1].local_model == "my/model"                    # an explicit --model wins
+    monkeypatch.setattr(doctor, "report", lambda cfg: 7)
+    with pytest.raises(SystemExit) as stop:
+        main(["--check"])
+    assert stop.value.code == 7
+
+
+def test_check_report_runs_here(capsys):
+    from leanwatch.doctor import report
+    from leanwatch.config import Config
+
+    code = report(Config())
+    out = capsys.readouterr().out
+    assert code in (0, 1) and "Start LeanWatch with" in out

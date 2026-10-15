@@ -25,9 +25,12 @@ The project has three parts:
 ```bash
 cd agent
 pip install -r requirements.txt         # with an NVIDIA GPU, install the CUDA build of torch first
+python -m leanwatch --check             # is this computer ready, and which model fits it?
 python -m leanwatch                     # the teal bubble appears in the bottom-right corner
 python -m leanwatch --autostart on      # optional: start it every time you log in
 ```
+
+On Ubuntu/Debian, Qt also needs one system library: `sudo apt install libxcb-cursor0` (LeanWatch tells you if it's missing).
 
 1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac).
 2. Type what you need and press <kbd>Enter</kbd> or **Go**.
@@ -39,6 +42,8 @@ Drag the bubble anywhere; it remembers the spot. Right-click it to hide it (the 
 
 The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B) (Apache-2.0, about 16 GB) from Hugging Face. Everything then runs on your computer: no API key, and no screenshots leave the machine. On an NVIDIA GPU with less than 24 GB, add `--4bit` (`pip install bitsandbytes` first) to fit it in about 6 GB. On an Apple Silicon Mac it runs on the GPU (`mps`) as is. `--preload` loads the model at start-up so the first task starts quickly.
 
+**A laptop without a big GPU** (most laptops): on a CPU the 7B model needs about 35 GB of memory. Use `--small` instead: [UI-TARS-2B-SFT](https://huggingface.co/ByteDance-Seed/UI-TARS-2B-SFT) (Apache-2.0, about 4.5 GB download, about 10 GB of memory). It is less accurate and takes several seconds to a minute per step on a CPU, but it runs. `python -m leanwatch --check` tells you which one fits.
+
 | Option | What it does |
 | --- | --- |
 | `--hotkey "ctrl+alt+l"` | A different shortcut to open the box (`none` turns it off) |
@@ -46,7 +51,9 @@ The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/
 | `--dry-run` | Plans and explains on your real screen but never moves the mouse or presses keys. Start here. |
 | `--speed 0.6` | Slower pointer, easier to follow |
 | `--adapter runs/my-model` | Use a model you fine-tuned with `training/train_sft.py` (it remembers its own settings) |
-| `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`) |
+| `--check` | Check this computer (screen, libraries, GPU, memory) and say which model fits |
+| `--small` | The 2B model, for laptops without a big GPU |
+| `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`); the coordinate format is worked out from the model |
 | `--device`, `--max-pixels` | Where the model runs (`auto`, `cuda`, `mps`, `cpu`) and the largest screenshot it sees |
 | `--language Spanish` | Language of the explanations |
 | `--web` | Also open the web control center (live screenshots, step log) |
@@ -115,10 +122,14 @@ training/              data engine, dataset importers, LoRA/QLoRA fine-tuning, e
 
 ## Tests
 
+Run these from the repository folder (`lean-watch/`):
+
 ```bash
-cd agent && pip install -r requirements-dev.txt && python -m pytest   # no API key, display or model download needed (the bubble runs offscreen)
-cd training && python -m pytest                                       # whole training pipeline with a tiny model on CPU
-npm install && npm test                                               # 26 browser checks on the practice screen
+pip install -r agent/requirements-dev.txt -r training/requirements.txt
+(cd agent && python -m pytest)          # no API key, display or model download needed (the bubble runs offscreen)
+(cd training && python -m pytest)       # the whole training pipeline with a tiny model on the CPU
+npm install && npm test                 # 26 browser checks on the practice screen
+LEANWATCH_X11_TESTS=1 python -m pytest agent/tests/x11   # optional, Linux: the real bubble with real clicks (needs Xvfb, openbox, xdotool, xterm)
 ```
 
 ## Publishing

@@ -325,16 +325,39 @@ def run_in_worker(qapp, fn):
     return out.get("value")
 
 
+def probe_inside(qapp, enter, probe, before=None):
+    """Hold `with enter():` in a worker thread (like the agent does) and call probe() on the GUI thread
+    while it is held. Widgets may only be touched from the GUI thread, so the checks happen here."""
+    inside, release = threading.Event(), threading.Event()
+
+    def work():
+        with enter():
+            inside.set()
+            release.wait(5)
+
+    t = threading.Thread(target=work)
+    t.start()
+    while not inside.is_set():
+        qapp.processEvents()
+        time.sleep(0.002)
+    if before:
+        before()
+    pump(qapp, 0.05)
+    value = probe()
+    release.set()
+    while t.is_alive():
+        qapp.processEvents()
+        time.sleep(0.002)
+    pump(qapp)
+    return value
+
+
 def test_screenshots_are_taken_without_our_windows(qapp):
     app, session, _ = make(qapp)
     app.shield.settle_s = 0.01
     assert session.shield is app.shield
 
-    def capture():
-        with app.shield.cloak():
-            return app.bubble.isVisible()
-
-    assert run_in_worker(qapp, capture) is False
+    assert probe_inside(qapp, app.shield.cloak, app.bubble.isVisible) is False
     assert app.bubble.isVisible()                 # back afterwards
     close(app)
 
@@ -343,11 +366,7 @@ def test_no_hiding_when_the_os_already_keeps_us_out_of_screenshots(qapp):
     app, _, _ = make(qapp, excluded=True)
     assert app.shield.excluded_from_capture
 
-    def capture():
-        with app.shield.cloak():
-            return app.bubble.isVisible()
-
-    assert run_in_worker(qapp, capture) is True
+    assert probe_inside(qapp, app.shield.cloak, app.bubble.isVisible) is True
     close(app)
 
 
@@ -359,11 +378,10 @@ def test_clicks_on_a_spot_under_the_bubble_hide_it_first(qapp):
     elsewhere = (5, 5)
 
     def click_at(point):
-        with app.shield.clear_of([point]):
-            return app.bubble.isVisible()
+        return probe_inside(qapp, lambda: app.shield.clear_of([point]), app.bubble.isVisible)
 
-    assert run_in_worker(qapp, lambda: click_at((centre.x(), centre.y()))) is False
-    assert run_in_worker(qapp, lambda: click_at(elsewhere)) is True
+    assert click_at((centre.x(), centre.y())) is False
+    assert click_at(elsewhere) is True
     assert app.bubble.isVisible()
     close(app)
 
@@ -518,24 +536,9 @@ def test_expired_question_is_cleared(qapp):
 def test_opening_the_box_during_a_screenshot_waits_until_it_is_taken(qapp):
     app, session, _ = make(qapp, granted=True)
     app.shield.settle_s = 0.0
-    seen = {}
-
-    def capture():
-        with app.shield.cloak():
-            time.sleep(0.15)                       # the person presses the shortcut in the middle of it
-            seen["panel"] = app.panel.isVisible()
-        return True
-
-    t = threading.Thread(target=capture)
-    t.start()
-    end = time.monotonic() + 0.05
-    while time.monotonic() < end:
-        qapp.processEvents()
-    app.open_from_hotkey()
-    while t.is_alive():
-        qapp.processEvents()
-    pump(qapp, 0.1)
-    assert seen["panel"] is False                  # not in the model's screenshot
+    # The person presses the shortcut in the middle of a screenshot.
+    during = probe_inside(qapp, app.shield.cloak, app.panel.isVisible, before=app.open_from_hotkey)
+    assert during is False                        # not in the model's screenshot
     assert app.panel.isVisible() and not app.bubble.isVisible()   # shown afterwards, without the bubble on top
     close(app)
 

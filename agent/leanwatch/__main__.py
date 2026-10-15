@@ -10,6 +10,8 @@ import threading
 from .config import Config
 from .native import DEFAULT_HOTKEY
 
+SMALL_MODEL = "ByteDance-Seed/UI-TARS-2B-SFT"
+
 
 def main(argv: list[str] | None = None) -> None:
     cfg = Config()
@@ -33,7 +35,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--adapter", default=cfg.adapter, help="folder of a LoRA adapter from training/train_sft.py")
     p.add_argument("--4bit", dest="load_in_4bit", action="store_true", default=cfg.load_in_4bit, help="load the local model in 4-bit (NVIDIA GPU, needs bitsandbytes)")
     p.add_argument("--device", default=cfg.device, choices=["auto", "cuda", "mps", "cpu"])
-    p.add_argument("--coords", default=None, choices=["abs", "rel1000"], help="how the model writes points: abs (UI-TARS-1.5, Qwen2.5-VL; default) or rel1000. Read from the adapter when you pass one")
+    p.add_argument("--coords", default=None, choices=["auto", "abs", "rel1000"], help="how the model writes points: abs (Qwen2.5-VL, UI-TARS-1.5) or rel1000 (Qwen2-VL, UI-TARS 2B, Qwen3-VL). Default: worked out from the model")
+    p.add_argument("--small", action="store_true", help=f"use the small model ({SMALL_MODEL}, about 9 GB of memory on a CPU) for laptops without a big GPU")
+    p.add_argument("--check", action="store_true", help="check whether this computer is ready (screen, libraries, GPU, memory) and which model fits, then exit")
     p.add_argument("--style", default=None, choices=["box", "point"], help="how points are written in the prompt: box (start_box=..., default) or point (point='<point>x y</point>'). Read from the adapter when you pass one")
     p.add_argument("--max-pixels", type=int, default=cfg.local_max_pixels, help="largest screenshot size, in pixels, the local model sees")
     p.add_argument("--language", default=None, help="language for the explanations (default English, or what your fine-tuned model was trained with)")
@@ -45,6 +49,8 @@ def main(argv: list[str] | None = None) -> None:
     cfg.port = args.port
     cfg.dry_run = args.dry_run
     cfg.brain = args.brain
+    if args.small and not args.model:
+        args.model = SMALL_MODEL
     if args.model:
         if cfg.brain == "claude":
             cfg.claude_model = args.model
@@ -78,6 +84,11 @@ def main(argv: list[str] | None = None) -> None:
     cfg.effort = args.effort
     cfg.move_speed = args.speed
     cfg.preload = args.preload
+
+    if args.check:
+        from .doctor import report
+
+        raise SystemExit(report(cfg))
 
     if args.autostart:
         from .autostart import Autostart

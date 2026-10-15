@@ -532,6 +532,22 @@ class MacNative(Native):
 # ---------------------------------------------------------------------------
 # Linux (X11; under Wayland LeanWatch runs through XWayland)
 # ---------------------------------------------------------------------------
+def ensure_xauthority() -> None:
+    """pyautogui pulls in an old X11 library (python3-Xlib 0.15) that refuses to connect when there is no
+    ~/.Xauthority file, even to a display that needs none. Point it at an empty file in that case."""
+    if not sys.platform.startswith("linux") or os.environ.get("XAUTHORITY"):
+        return
+    from pathlib import Path
+
+    if (Path.home() / ".Xauthority").exists():
+        return
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="leanwatch-xauth-")
+    os.close(fd)
+    os.environ["XAUTHORITY"] = path
+
+
 def wayland_session() -> bool:
     return bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE") == "wayland"
 
@@ -550,6 +566,7 @@ class X11Native(Native):
 
     def __init__(self):
         try:
+            ensure_xauthority()
             from Xlib import X, display, protocol
 
             self.X, self.protocol = X, protocol
@@ -565,7 +582,7 @@ class X11Native(Native):
 
     def supports_translucency(self) -> bool:
         if self.dpy is None:
-            return True
+            return False      # can't tell: a shaped (masked) bubble looks right with or without a compositor
         with self._lock:
             owner = self.dpy.get_selection_owner(self.atom(f"_NET_WM_CM_S{self.dpy.get_default_screen()}"))
         return owner not in (0, self.X.NONE)

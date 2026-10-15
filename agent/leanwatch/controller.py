@@ -78,6 +78,9 @@ class PyAutoGuiBackend:
             except Exception:
                 pass
         _stub_mouseinfo()
+        from .native import ensure_xauthority
+
+        ensure_xauthority()
         import pyautogui
 
         pyautogui.FAILSAFE = True

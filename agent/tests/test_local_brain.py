@@ -160,6 +160,7 @@ def test_real_tiny_qwen_model_answers(tmp_path):
     assert isinstance(ans.text, str)
     # The tiny processor caps images at 64 patches of 28px; the brain must learn the real size from the grid.
     assert ans.image_w % 28 == 0 and ans.image_h % 28 == 0 and ans.image_w * ans.image_h <= 28 * 28 * 64
+    assert model.coords == "abs"          # a Qwen2.5-VL model (like UI-TARS-1.5) writes pixel coordinates
 
 
 @pytest.mark.parametrize("style,mark,other", [("box", "<|box_start|>(x1,y1)<|box_end|>", "<point>"),
@@ -336,3 +337,22 @@ def test_controller_still_asks_for_steps_nobody_approved():
     brain.run("tidy")
     assert hooks.asked and hooks.asked[0].startswith("Type")     # the controller's typed-text check caught it
     assert not [e for e in backend.log if e[0] == "write"]
+
+
+# --------------------------------------------------------------------------- model families
+@pytest.mark.parametrize("model_type,coords", [("qwen2_5_vl", "abs"), ("qwen2_vl", "rel1000"), ("qwen3_vl", "rel1000")])
+def test_coordinate_format_follows_the_model_family(model_type, coords):
+    from leanwatch.local_brain import coords_for
+
+    assert coords_for(model_type) == coords
+
+
+def test_auto_coordinates_use_what_the_model_reports():
+    brain, backend, hooks, model, g, _ = make([
+        "Action: click(start_box='<|box_start|>(500,500)<|box_end|>')",     # UI-TARS 2B: a 0-1000 grid
+        "Action: finished(content='ok')",
+    ], coords="auto")
+    model.coords = "rel1000"
+    assert brain.run("x").ok
+    click = [e for e in backend.log if e[0] == "click"][0]
+    assert abs(click[2][0] - 960) <= 3 and abs(click[2][1] - 540) <= 3     # the centre of the screen

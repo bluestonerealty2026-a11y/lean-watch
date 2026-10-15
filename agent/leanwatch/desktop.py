@@ -60,9 +60,14 @@ def _xcb_cursor_available() -> bool:
     """Qt 6.5+ can't start its X11 plugin without libxcb-cursor, and then aborts without a useful message."""
     if os.environ.get("QT_QPA_PLATFORM", "xcb").split(":")[0] not in ("xcb", ""):
         return True
+    import ctypes
     import ctypes.util
 
-    return ctypes.util.find_library("xcb-cursor") is not None
+    try:
+        ctypes.CDLL("libxcb-cursor.so.0")      # what Qt itself loads (also finds it in LD_LIBRARY_PATH)
+        return True
+    except OSError:
+        return ctypes.util.find_library("xcb-cursor") is not None
 
 
 def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY) -> int:
