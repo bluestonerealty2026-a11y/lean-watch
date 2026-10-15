@@ -87,7 +87,7 @@ class ScreenCapture:
         import mss
 
         if self._sct is None:
-            self._sct = mss.mss()
+            self._sct = (getattr(mss, "MSS", None) or mss.mss)()   # mss 10.2 renamed mss.mss to mss.MSS
         mon = self._sct.monitors[1]
         if self.shield is not None:
             with self.shield.cloak():

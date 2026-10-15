@@ -86,10 +86,16 @@ class Autostart:
         self.launcher.write_text(launcher_source(args))
         python = gui_python(self.executable, self.platform)
         if self.platform == "win32":
+            command = f'"{python}" "{self.launcher}"'
+            if len(command) > 260:
+                raise RuntimeError("Windows limits start-up commands to 260 characters, and this one is longer: "
+                                   "install Python (or LeanWatch's virtual environment) in a shorter folder.")
             reg = self.winreg()
             with reg.CreateKey(reg.HKEY_CURRENT_USER, RUN_KEY) as key:
-                reg.SetValueEx(key, "LeanWatch", 0, reg.REG_SZ, f'"{python}" "{self.launcher}"')
-            return f"LeanWatch will start when you sign in to Windows (HKCU\\{RUN_KEY}\\LeanWatch)."
+                reg.SetValueEx(key, "LeanWatch", 0, reg.REG_SZ, command)
+            note = (" Note: this looks like the Microsoft Store Python, which may keep the setting in a private copy "
+                    "of the registry; the python.org installer is more reliable for this.") if "WindowsApps" in python else ""
+            return f"LeanWatch will start when you sign in to Windows (HKCU\\{RUN_KEY}\\LeanWatch).{note}"
         entry = self.entry
         if entry is None:
             raise RuntimeError(f"Starting at login is not supported on {self.platform}.")

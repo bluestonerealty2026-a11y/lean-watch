@@ -82,3 +82,32 @@ def test_websocket_checks_origin_and_token():
         assert msg["type"] == "error"
         await ws.close()
     run(go)
+
+
+def test_answering_a_question_is_not_taking_over():
+    import threading as _t
+
+    from leanwatch.config import Config
+    from leanwatch.server import Session
+
+    cfg = Config()
+    cfg.confirm_timeout_s = 2
+    s = Session(cfg, "tok")
+
+    class C:
+        resyncs = 0
+
+        def resync(self):
+            C.resyncs += 1
+
+    s.controller = C()
+    got = {}
+    t = _t.Thread(target=lambda: got.setdefault("allow", s.confirm("Delete it?", "can't undo")))
+    t.start()
+    import time as _time
+    while not s.pending:
+        _time.sleep(0.01)
+    cid = next(iter(s.pending))
+    s.handle({"type": "confirm", "id": cid, "allow": True})
+    t.join(2)
+    assert got["allow"] is True and C.resyncs == 1

@@ -81,6 +81,14 @@ class Native:
     def exclude_from_capture(self, widget) -> bool:
         return False
 
+    def keep_on_top(self, widget) -> None:
+        """Called every couple of seconds: other always-on-top windows may have covered ours."""
+        widget.raise_()
+
+    def window_rect_px(self, widget):
+        """The window's rectangle in mouse pixels (pyautogui/mss), or None to let the caller compute it."""
+        return None
+
     def activate_own(self, widget) -> None:
         widget.raise_()
 
@@ -111,9 +119,35 @@ def _pynput_hotkey(combo: str, callback):
 # ---------------------------------------------------------------------------
 # Windows
 # ---------------------------------------------------------------------------
+def enable_dpi_awareness(platform: str = sys.platform) -> None:
+    """Windows: per-monitor DPI awareness (v2), set before Qt, pyautogui or mss can pick a worse mode.
+
+    The first call in a process wins. pyautogui asks for "system aware" when it is imported, which
+    makes Windows stretch our windows and shift coordinates on a second monitor with another scale.
+    """
+    if platform != "win32":
+        return
+    import ctypes
+
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):   # PER_MONITOR_AWARE_V2
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        pass
+
+
 class WindowsNative(Native):
     name = "windows"
-    WDA_EXCLUDEFROMCAPTURE = 0x11   # Windows 10 version 2004 and later
+    WDA_EXCLUDEFROMCAPTURE = 0x11   # Windows 10 version 2004 (build 19041) and later
+    HWND_TOPMOST = -1
+    SWP_FLAGS = 0x0001 | 0x0002 | 0x0010 | 0x0200   # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
+    # Shell surfaces that are not "the app the person was using".
+    SHELL_CLASSES = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland",
+                     "XamlExplorerHostIslandWindow", "Windows.UI.Core.CoreWindow", "ForegroundStaging", "MultitaskingViewFrame"}
     VK = {"space": 0x20, "enter": 0x0D, "tab": 0x09, "esc": 0x1B, "escape": 0x1B,
           **{f"f{i}": 0x6F + i for i in range(1, 25)}}
     MODS = {"alt": 0x1, "ctrl": 0x2, "shift": 0x4, "cmd": 0x8}
@@ -139,6 +173,15 @@ class WindowsNative(Native):
         u.IsIconic.restype = wintypes.BOOL
         u.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
         u.SetWindowDisplayAffinity.restype = wintypes.BOOL
+        u.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        u.GetWindowDisplayAffinity.restype = wintypes.BOOL
+        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        u.SetWindowPos.restype = wintypes.BOOL
+        u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        u.GetAncestor.restype = wintypes.HWND
+        u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
         u.AttachThreadInput.restype = wintypes.BOOL
         u.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
@@ -155,7 +198,33 @@ class WindowsNative(Native):
         return pid.value
 
     def exclude_from_capture(self, widget) -> bool:
-        return bool(self.user32.SetWindowDisplayAffinity(int(widget.winId()), self.WDA_EXCLUDEFROMCAPTURE))
+        # Older builds treat this like WDA_MONITOR and paint a black shape into screenshots instead.
+        if sys.getwindowsversion().build < 19041:
+            return False
+        hwnd = int(widget.winId())
+        if not self.user32.SetWindowDisplayAffinity(hwnd, self.WDA_EXCLUDEFROMCAPTURE):
+            return False      # e.g. refused for some layered (see-through) windows; the bubble hides instead
+        got = self.wt.DWORD(0)
+        return bool(self.user32.GetWindowDisplayAffinity(hwnd, self.ct.byref(got))) and got.value == self.WDA_EXCLUDEFROMCAPTURE
+
+    def keep_on_top(self, widget) -> None:
+        # All always-on-top windows share one layer and the last one raised wins (the taskbar after a
+        # click, video players, meeting bars), so pin ours back on top, without taking focus.
+        self.user32.SetWindowPos(int(widget.winId()), self.HWND_TOPMOST, 0, 0, 0, 0, self.SWP_FLAGS)
+
+    def after_show(self, widget) -> None:
+        self.keep_on_top(widget)
+
+    def window_rect_px(self, widget):
+        r = self.wt.RECT()
+        if not self.user32.GetWindowRect(int(widget.winId()), self.ct.byref(r)):
+            return None
+        return r.left, r.top, r.right, r.bottom      # physical pixels: the same space as pyautogui and mss
+
+    def _class_name(self, hwnd) -> str:
+        buf = self.ct.create_unicode_buffer(256)
+        self.user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
 
     def _force_foreground(self, hwnd) -> None:
         """SetForegroundWindow, with the usual AttachThreadInput step so Windows lets us do it."""
@@ -178,13 +247,25 @@ class WindowsNative(Native):
     def focus_tracker(self) -> FocusTracker:
         me = os.getpid()
 
-        def activate(hwnd):
-            if self.user32.IsWindow(hwnd) and not self.user32.IsIconic(hwnd):
-                self._force_foreground(hwnd)
+        def current():
+            h = self.user32.GetForegroundWindow()
+            if not h:
+                return None
+            root = self.user32.GetAncestor(h, 2) or h          # GA_ROOT: the top-level window
+            return None if self._class_name(root) in self.SHELL_CLASSES else root
 
-        return FocusTracker(self.user32.GetForegroundWindow, lambda h: self._pid_of(h) == me, activate)
+        def activate(hwnd):
+            if not self.user32.IsWindow(hwnd):
+                return
+            if self.user32.IsIconic(hwnd):
+                self.user32.ShowWindow(hwnd, 9)                 # SW_RESTORE
+            self._force_foreground(hwnd)
+
+        return FocusTracker(current, lambda h: self._pid_of(h) == me, activate)
 
     def register_hotkey(self, combo: str, callback):
+        # RegisterHotKey needs no permissions or keyboard hook, and a hotkey press gives LeanWatch the
+        # right to bring its box to the front. It fails cleanly if another app already uses the combination.
         mods, key = parse_hotkey(combo)
         vk = self.VK.get(key) or (ord(key.upper()) if len(key) == 1 and key.isalnum() else None)
         if vk is None:
@@ -327,6 +408,14 @@ class MacNative(Native):
                     A.NSEvent.removeMonitor_(monitor)
 
         return stop
+
+    def keep_on_top(self, widget) -> None:
+        widget.raise_()
+        if self.appkit:
+            try:
+                self._nswindow(widget).orderFrontRegardless()
+            except Exception:
+                pass
 
     def notes(self) -> list[str]:
         if not self.appkit:

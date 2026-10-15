@@ -43,6 +43,28 @@ class Backend(Protocol):
     def write(self, text: str) -> None: ...
 
 
+def _stub_mouseinfo() -> None:
+    """pyautogui imports `mouseinfo`, a small tkinter tool LeanWatch never uses. Without tkinter
+    (common on Linux) that import calls sys.exit() and would close LeanWatch, so stand in for it."""
+    if "mouseinfo" in sys.modules:
+        return
+    try:
+        import tkinter  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    import types
+
+    stub = types.ModuleType("mouseinfo")
+
+    def MouseInfoWindow(*_a, **_k):
+        raise RuntimeError("pyautogui's MouseInfo window needs tkinter")
+
+    stub.MouseInfoWindow = MouseInfoWindow
+    sys.modules["mouseinfo"] = stub
+
+
 class PyAutoGuiBackend:
     """Real input through pyautogui. Moving the mouse into a corner aborts (FAILSAFE)."""
 
@@ -55,6 +77,7 @@ class PyAutoGuiBackend:
                 ctypes.windll.shcore.SetProcessDpiAwareness(2)
             except Exception:
                 pass
+        _stub_mouseinfo()
         import pyautogui
 
         pyautogui.FAILSAFE = True

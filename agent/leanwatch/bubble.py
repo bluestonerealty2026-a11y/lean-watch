@@ -519,10 +519,10 @@ class Shield(QObject):
     _hide = Signal()
     _show = Signal()
 
-    def __init__(self, windows, to_screen_px, settle_s: float = SETTLE_S):
+    def __init__(self, windows, rect_px, settle_s: float = SETTLE_S):
         super().__init__()
         self.windows = windows                 # callable -> list of our top-level widgets
-        self.to_screen_px = to_screen_px       # callable: QRect (Qt logical) -> (x0, y0, x1, y1) mouse pixels
+        self.rect_px = rect_px                 # callable: widget -> (x0, y0, x1, y1) in mouse pixels, or None
         self.settle_s = settle_s
         self.excluded_from_capture = False     # set when the OS hides our windows from screenshots
         self._lock = threading.Lock()
@@ -538,7 +538,7 @@ class Shield(QObject):
         for w in self.windows():
             try:
                 if w.isVisible():
-                    rects.append(self.to_screen_px(w.frameGeometry()))
+                    rects.append(self.rect_px(w))
             except RuntimeError:   # the window is being destroyed (LeanWatch is quitting)
                 continue
         with self._lock:
@@ -587,9 +587,13 @@ class Shield(QObject):
 
     @Slot()
     def _do_hide(self) -> None:
-        self._hidden = [w for w in self.windows() if w.isVisible()]
-        for w in self._hidden:
-            w.hide()
+        # Add to the list rather than replace it: a show() queued by the previous cloak may not
+        # have run yet (it skips while a new cloak is active), and its windows must still come back.
+        for w in self.windows():
+            if w.isVisible():
+                w.hide()
+                if w not in self._hidden:
+                    self._hidden.append(w)
 
     @Slot()
     def _do_show(self) -> None:
@@ -600,6 +604,14 @@ class Shield(QObject):
             w.show()
         self._hidden = []
         self.refresh()
+
+
+def _grab_region(rect) -> bytes:
+    import mss
+
+    x0, y0, x1, y1 = rect
+    with (getattr(mss, "MSS", None) or mss.mss)() as sct:
+        return bytes(sct.grab({"left": x0, "top": y0, "width": max(1, x1 - x0), "height": max(1, y1 - y0)}).bgra)
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +640,7 @@ class BubbleApp(QObject):
         self.hidden_by_user = False
         self.focus = native.focus_tracker()
 
-        self.shield = Shield(self.windows, self._to_screen_px)
+        self.shield = Shield(self.windows, self._rect_px)
         self.session.shield = self.shield
 
         self.bubble.clicked.connect(self.toggle)
@@ -671,14 +683,49 @@ class BubbleApp(QObject):
         if not self.hidden_by_user:
             self.bubble.show()
         self.shield.refresh()
+        if self.shield.excluded_from_capture:
+            QTimer.singleShot(1200, self.verify_exclusion)
 
     def eventFilter(self, obj, event) -> bool:
         if event.type() in (QEvent.Move, QEvent.Resize, QEvent.Show, QEvent.Hide):
             self.shield.refresh()
+        if event.type() == QEvent.WindowActivate and obj is self.panel and self.running:
+            # Clicking Stop, Allow or Resume makes the box the active window, and the agent's next
+            # keystrokes would land in it. Hand the keyboard back once the click is done.
+            QTimer.singleShot(150, self._return_keyboard)
         if event.type() == QEvent.Show:
             # Window managers forget "on every desktop / above others" when a window hides; set it again.
             QTimer.singleShot(0, lambda w=obj: self._after_show(w))
         return False
+
+    def _return_keyboard(self) -> None:
+        if self.running and self.panel.isActiveWindow():
+            self.focus.restore()
+
+    def verify_exclusion(self, grab=None) -> bool:
+        """Check that the OS really keeps our windows out of screenshots: grab the bubble's spot with the
+        bubble shown and hidden. If the pictures differ, fall back to hiding it for each screenshot."""
+        if not self.shield.excluded_from_capture or not self.bubble.isVisible():
+            return self.shield.excluded_from_capture
+        rect = self._rect_px(self.bubble)
+        if rect is None:
+            return self.shield.excluded_from_capture
+        try:
+            grab = grab or _grab_region
+            shown = grab(rect)
+            self.bubble.hide()
+            QApplication.processEvents()
+            time.sleep(SETTLE_S)
+            hidden = grab(rect)
+        except Exception:
+            self.shield.excluded_from_capture = False
+            return False
+        finally:
+            if not self.hidden_by_user and not self.expanded:
+                self.bubble.show()
+        if shown != hidden:
+            self.shield.excluded_from_capture = False
+        return self.shield.excluded_from_capture
 
     def _after_show(self, w) -> None:
         try:
@@ -708,6 +755,11 @@ class BubbleApp(QObject):
         self.bubble.move(clamp_position(pos, self.bubble.size(), area))
         self._save_settings()
 
+    def _rect_px(self, w: QWidget):
+        """A window's rectangle in the mouse pixels pyautogui uses."""
+        native = self.native.window_rect_px(w)
+        return native if native is not None else self._to_screen_px(w.frameGeometry())
+
     def _to_screen_px(self, r: QRect):
         """Qt's logical coordinates -> the mouse pixels pyautogui uses, on the main monitor."""
         primary = QGuiApplication.primaryScreen()
@@ -724,7 +776,10 @@ class BubbleApp(QObject):
         """Some apps and the taskbar push other top-most windows down; quietly come back on top."""
         for w in self.windows():
             if w.isVisible():
-                w.raise_()
+                try:
+                    self.native.keep_on_top(w)
+                except Exception:
+                    pass
 
     # ---------------- open and close ----------------
     def toggle(self) -> None:
@@ -749,12 +804,13 @@ class BubbleApp(QObject):
     def collapse(self) -> None:
         if self.confirm_id or self.pending_text:
             return                            # a question is waiting; keep it on screen
+        # Give the keyboard back first: hiding the active window would let the OS pick some other window.
+        if not self.running and self.panel.isActiveWindow():
+            self.focus.restore()
         self.panel.hide()
         self.expanded = False
         if not self.hidden_by_user:
             self.bubble.show()
-        if not self.running:
-            self.focus.restore()
         self.shield.refresh()
 
     def open_from_hotkey(self) -> None:

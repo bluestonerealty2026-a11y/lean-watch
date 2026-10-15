@@ -356,6 +356,27 @@ def test_clicks_on_a_spot_under_the_bubble_hide_it_first(qapp):
     close(app)
 
 
+def test_back_to_back_cloaks_bring_the_windows_back(qapp):
+    """The worker often starts the next screenshot before the GUI has run the previous show()."""
+    app, _, _ = make(qapp)
+    app.shield.settle_s = 0.0
+
+    def two_quick_captures():
+        with app.shield.cloak():
+            pass
+        with app.shield.cloak():            # the queued show() from the first one hasn't run yet
+            pass
+        return True
+
+    t = threading.Thread(target=two_quick_captures)
+    t.start()
+    while t.is_alive():
+        qapp.processEvents()
+    pump(qapp, 0.1)
+    assert app.bubble.isVisible()
+    close(app)
+
+
 def test_rects_scale_to_mouse_pixels(qapp):
     app, session, _ = make(qapp)
     app.screen_px_size = (QApplication.primaryScreen().geometry().width() * 2,
@@ -388,7 +409,7 @@ def test_nested_cloaks_show_the_windows_once_at_the_end(qapp):
             return QRect(0, 0, 10, 10)
 
     w = W()
-    shield = Shield(lambda: [w], lambda r: (0, 0, 10, 10), settle_s=0)
+    shield = Shield(lambda: [w], lambda widget: (0, 0, 10, 10), settle_s=0)
 
     def nested():
         with shield.cloak():
@@ -419,3 +440,26 @@ def test_focus_tracker_skips_our_own_windows():
         t.poll()
     t.restore()
     assert activated == ["browser"]
+
+
+def test_exclusion_is_double_checked_with_a_real_grab(qapp):
+    app, _, _ = make(qapp, excluded=True)
+    assert app.shield.excluded_from_capture
+    frames = iter([b"same", b"same"])
+    assert app.verify_exclusion(grab=lambda rect: next(frames)) is True
+    frames = iter([b"bubble visible", b"desktop only"])        # the OS ignored the request
+    assert app.verify_exclusion(grab=lambda rect: next(frames)) is False
+    assert not app.shield.excluded_from_capture and app.bubble.isVisible()
+    close(app)
+
+
+def test_clicking_the_box_during_a_task_gives_the_keyboard_back(qapp):
+    app, session, native = make(qapp, granted=True)
+    app.expand()
+    app.submit("open settings")
+    before = native.restored
+    app.panel.isActiveWindow = lambda: True       # e.g. the person just clicked Allow
+    QApplication.sendEvent(app.panel, QEvent(QEvent.WindowActivate))
+    pump(qapp, 0.3)
+    assert native.restored > before          # (the offscreen platform may deliver its own activation too)
+    close(app)

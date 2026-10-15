@@ -258,6 +258,9 @@ class Session(Hooks):
         event.wait(self.cfg.confirm_timeout_s)
         allow = self.pending.pop(cid, {}).get("allow", False) and not self.stop_event.is_set()
         self.narrate(f"You {'allowed' if allow else 'declined'}: {action}.", "thinking")
+        if self.controller is not None:
+            # The person moved the mouse to answer; that is not taking over, so don't pause for it.
+            self.controller.resync()
         return allow
 
     def paused(self, reason: str) -> None:

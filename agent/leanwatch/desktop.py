@@ -69,6 +69,9 @@ def preload_model(session) -> None:
 
 
 def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY) -> int:
+    from .native import enable_dpi_awareness
+
+    enable_dpi_awareness()        # Windows: before Qt, pyautogui or mss choose a DPI mode
     if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
         # Qt can't place always-on-top windows on Wayland, and pyautogui needs X anyway: use XWayland.
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
