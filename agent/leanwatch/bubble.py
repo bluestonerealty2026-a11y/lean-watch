@@ -54,6 +54,8 @@ STYLE = f"""
 QLabel {{ color: {TEXT}; font-size: 14px; }}
 QLabel#brand {{ font-weight: 700; font-size: 14px; }}
 QLabel#state, QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
+QLabel#muted[tone="done"] {{ color: {TEAL_HOVER}; font-size: 14px; font-weight: 600; }}
+QLabel#muted[tone="stopped"] {{ color: {AMBER}; font-size: 14px; font-weight: 600; }}
 QLabel#step {{ font-size: 15px; }}
 QLineEdit#cmd {{
     background: {FIELD}; color: {TEXT}; border: 2px solid {TEAL}; border-radius: 12px;
@@ -482,6 +484,13 @@ class Panel(QWidget):
         self.steps.setText("".join(rows))
         self.steps.show()
 
+    def set_notice(self, text: str, tone: str = "") -> None:
+        """The line under the header: the question, the task, or how it ended (tone "done" / "stopped")."""
+        self.notice.setText(text)
+        self.notice.setProperty("tone", tone)
+        self.notice.style().unpolish(self.notice)
+        self.notice.style().polish(self.notice)
+
     def show_activity(self, text: str) -> None:
         self.activity.setText(text)
         self.activity.setVisible(bool(text))
@@ -854,13 +863,13 @@ class BubbleApp(QObject):
             if text:
                 self._start(text)
         else:
-            self.panel.notice.setText("Okay. Nothing will move until you allow it.")
+            self.panel.set_notice("Okay. Nothing will move until you allow it.")
         self.panel.refit()
 
     def _start(self, text: str) -> None:
         reply = self.session.handle({"type": "command", "text": text})
         if reply and reply.get("type") == "error":
-            self.panel.notice.setText(reply.get("message", "Something went wrong."))
+            self.panel.set_notice(reply.get("message", "Something went wrong."), "stopped")
             self.panel.refit()
             return
         self.panel.input.clear()
@@ -894,7 +903,7 @@ class BubbleApp(QObject):
         if kind == "run_started":
             self.running = True
             self.steps = []
-            p.notice.setText(f"“{msg.get('text', '')}”")
+            p.set_notice(f"“{msg.get('text', '')}”")
             p.show_steps([])
             p.show_activity("Getting ready…")
             p.set_running(True)
@@ -908,7 +917,7 @@ class BubbleApp(QObject):
                 p.show_activity(text)
             elif msg.get("kind") == "final":
                 p.show_activity("")
-                p.notice.setText("✓ " + text)
+                p.set_notice("✓ " + text, "done")
             else:
                 self.steps.append(text)
                 p.show_steps(self.steps)
@@ -941,9 +950,9 @@ class BubbleApp(QObject):
             self.bubble.set_busy(False)
             self.bubble.set_attention(False)
             if msg.get("ok"):
-                p.notice.setText("✓ " + (msg.get("result") or "Done."))
+                p.set_notice("✓ " + (msg.get("result") or "Done."), "done")
             else:
-                p.notice.setText("✕ " + (msg.get("message") or msg.get("result") or "Stopped."))
+                p.set_notice("✕ " + (msg.get("message") or msg.get("result") or "Stopped."), "stopped")
             if not self.expanded:
                 self.expand(focus=False)
         else:

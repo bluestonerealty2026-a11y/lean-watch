@@ -1,5 +1,8 @@
-# LeanWatch local agent. Everything runs on your computer; no API key needed.
-aiohttp>=3.9          # local web server + WebSocket bridge
+# LeanWatch desktop helper. Everything runs on your computer; no API key needed.
+PySide6-Essentials>=6.8   # the floating bubble and its command box (Qt)
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"   # macOS: float over full-screen apps and every Space
+python-xlib>=0.33; sys_platform == "linux"             # Linux/X11: keep the bubble on every desktop, hand back focus
+aiohttp>=3.9          # local server for the optional web control center
 mss>=9.0              # fast screenshots
 pillow>=10.0          # resizing and encoding screenshots
 pyautogui>=0.9.54     # moves the real mouse and keyboard
@@ -14,5 +17,5 @@ peft>=0.14            # loads LoRA adapters from training/train_sft.py
 # Optional, NVIDIA only: 4-bit loading with --4bit (a 7B model in about 6 GB of VRAM)
 #   pip install bitsandbytes
 
-# The floating command box (overlay.py) uses tkinter, which ships with most
-# Python installers. On Debian/Ubuntu: sudo apt install python3-tk
+# Linux: Qt needs a few system libraries that most desktops already have. If the bubble
+# doesn't start, install them, e.g. on Ubuntu: sudo apt install libxcb-cursor0 libegl1

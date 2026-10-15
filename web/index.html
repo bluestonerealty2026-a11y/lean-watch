@@ -196,9 +196,9 @@
         <ol class="steps-plain">
           <li>Install Python 3.10 or newer. With an NVIDIA GPU, install the CUDA build of PyTorch first.</li>
           <li>In a terminal: <code>cd agent</code> then <code>pip install -r requirements.txt</code></li>
-          <li>Start it: <code>python -m leanwatch</code>. Your browser opens this page, already connected. The first task downloads the open model (UI-TARS-1.5-7B, about 16 GB); add <code>--4bit</code> to fit it in about 6 GB of GPU memory.</li>
+          <li>Start it: <code>python -m leanwatch</code>. A teal cursor bubble appears in the bottom-right corner, on top of every app. Click it (or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd>) and type what you need. The first task downloads the open model (UI-TARS-1.5-7B, about 16 GB); add <code>--4bit</code> (with <code>pip install bitsandbytes</code>) to fit it in about 6 GB of GPU memory.</li>
           <li>Using a model you fine-tuned: <code>python -m leanwatch --adapter ../runs/my-model</code> (see <code>training/README.md</code>).</li>
-          <li>Optional: <code>python -m leanwatch --overlay</code> adds the floating command box to the bottom-right corner of every screen.</li>
+          <li>Optional: <code>python -m leanwatch --autostart on</code> starts it every time you log in, so help is always one click away. <code>--web</code> also opens this page, connected.</li>
           <li>Try it safely first with <code>--dry-run</code>: the agent plans and narrates but never moves the mouse.</li>
         </ol>
       </article>

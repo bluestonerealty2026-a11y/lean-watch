@@ -1,72 +1,79 @@
 # LeanWatch
 
-Type what you want to do. LeanWatch moves the cursor, clicks and types for you while you lean back and watch, and it explains every step in plain words. When it finishes, press **Now you try**: the screen rewinds and LeanWatch outlines each spot so you can do it with your own hands.
+A small teal cursor bubble floats on top of every app on your computer. When you need help, click it: it opens into a box where you type what you want to do ("turn on dark mode", "make this photo black and white"). Then lean back and watch. LeanWatch moves the mouse, clicks and types for you, and explains every step in plain words so you can do it yourself next time.
 
 It is for people who find video tutorials hard to follow: editing a photo, rotating a model in a 3D app, using the command prompt, or just finding a setting.
 
-The project has two parts:
+![The LeanWatch box on a desktop, explaining each step while it types into a terminal](docs/bubble-desktop.png)
+
+| Closed: a bubble on top of every app | Click it: type what you need | It works and explains each step | Done, with a summary |
+| --- | --- | --- | --- |
+| ![](docs/bubble-1-closed.png) | ![](docs/bubble-2-open.png) | ![](docs/bubble-3-working.png) | ![](docs/bubble-4-done.png) |
+
+*(Screenshots of the real app, taken on a Linux desktop during an automated test.)*
+
+The project has three parts:
 
 | Part | What it does | Needs |
 | --- | --- | --- |
-| `web/` control center | Command box in the bottom-right corner, permission screen, step-by-step notes, a **practice computer** with five apps, build-progress tracker | Just a browser: https://bluestonerealty2026-a11y.github.io/lean-watch/ or `web/index.html` |
-| `agent/` local agent | Controls your **real** mouse and keyboard with an open vision-language model running on your computer, serves the control center, and adds an always-on-top command box to every screen | Python 3.10+, about 6 GB of GPU memory (or more RAM and patience). No API key |
-| `training/` | Records training data on the practice computer, imports public GUI datasets, and fine-tunes the open model with LoRA / QLoRA | A GPU for real runs; see [training/README.md](training/README.md) |
+| `agent/` desktop helper | The floating bubble and its command box, and the agent that controls your **real** mouse and keyboard with an open vision-language model running on your computer | Python 3.10+, about 6 GB of GPU memory (or more RAM and patience). No API key |
+| `training/` | Records training data, imports public GUI datasets, and fine-tunes the open model with LoRA / QLoRA | A GPU for real runs; see [training/README.md](training/README.md) |
+| `web/` practice computer | A pretend desktop in the browser with five apps, for trying LeanWatch safely and for recording training data; also shows build progress | Just a browser: https://bluestonerealty2026-a11y.github.io/lean-watch/ |
 
-## Try it in your browser
-
-Live: **https://bluestonerealty2026-a11y.github.io/lean-watch/**. Or open `web/index.html` (double-click it). Nothing to install.
-
-1. Type a task in the box at the bottom right, or pick an example: *Turn on dark mode*, *Make my photo black and white*, *Rotate the cube 45 degrees*, *Create a folder called Homework using the terminal*.
-2. Click **Allow** on the permission screen.
-3. Watch. Each step is explained beside the screen, with how to do the same thing in Windows, macOS, Photoshop or Blender.
-4. Press **Now you try** to practise it yourself.
-
-Press <kbd>/</kbd> to jump to the command box and <kbd>Esc</kbd> to stop. The practice computer has Settings, PhotoLab (a Photoshop-style editor), Blocks3D (a Blender-style 3D editor), Command Prompt and Files.
-
-## Run it on your real computer
+## Install and start
 
 ```bash
 cd agent
 pip install -r requirements.txt         # with an NVIDIA GPU, install the CUDA build of torch first
-python -m leanwatch                     # opens the control center, already connected
+python -m leanwatch                     # the teal bubble appears in the bottom-right corner
+python -m leanwatch --autostart on      # optional: start it every time you log in
 ```
 
-In the command box choose **My computer**, give permission, and type a task. The first task downloads
-[UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B) (Apache-2.0, about 16 GB) from
-Hugging Face. Everything then runs on your computer: no API key, and no screenshots leave the machine.
-On an NVIDIA GPU with less than 24 GB, add `--4bit` (`pip install bitsandbytes` first) to fit it in about
-6 GB. On an Apple Silicon Mac it runs on the GPU (`mps`) as is.
+1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere.
+2. Type what you need and press <kbd>Enter</kbd> or **Go**.
+3. The first time, LeanWatch asks to use your mouse and keyboard. Click **Allow for this session**.
+4. Watch. Each step appears in the box. LeanWatch asks before anything that is hard to undo.
+5. **Stop** (or <kbd>Esc</kbd>) ends it at once. Moving the mouse yourself pauses it.
+
+Drag the bubble anywhere; it remembers the spot. Right-click it to hide it (the shortcut brings it back), move it back to the corner, or quit.
+
+The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B) (Apache-2.0, about 16 GB) from Hugging Face. Everything then runs on your computer: no API key, and no screenshots leave the machine. On an NVIDIA GPU with less than 24 GB, add `--4bit` (`pip install bitsandbytes` first) to fit it in about 6 GB. On an Apple Silicon Mac it runs on the GPU (`mps`) as is. `--preload` loads the model at start-up so the first task starts quickly.
 
 | Option | What it does |
 | --- | --- |
-| `--overlay` | Also shows the floating command box in the bottom-right corner of every screen |
-| `--dry-run` | Plans and narrates on your real screen but never moves the mouse or presses keys. Start here. |
-| `--cli "task"` | Runs one task in the terminal, no browser |
+| `--hotkey "ctrl+alt+l"` | A different shortcut to open the box (`none` turns it off) |
+| `--autostart on` / `off` | Start LeanWatch, with the other options you give, every time you log in |
+| `--dry-run` | Plans and explains on your real screen but never moves the mouse or presses keys. Start here. |
 | `--speed 0.6` | Slower pointer, easier to follow |
 | `--adapter runs/my-model` | Use a model you fine-tuned with `training/train_sft.py` (it remembers its own settings) |
 | `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`) |
 | `--device`, `--max-pixels` | Where the model runs (`auto`, `cuda`, `mps`, `cpu`) and the largest screenshot it sees |
 | `--language Spanish` | Language of the explanations |
+| `--web` | Also open the web control center (live screenshots, step log) |
+| `--no-bubble` | Web control center only, no bubble |
+| `--cli "task"` | Run one task in the terminal |
 | `--brain claude` | Optional: use the Claude API instead (`pip install -r requirements-claude.txt`, needs `ANTHROPIC_API_KEY`) |
 
-### Platform notes
+### Your operating system
 
-- **macOS**: give your terminal app permission under System Settings → Privacy & Security → **Accessibility** (to move the mouse) and **Screen Recording** (to take screenshots), then restart the terminal. Retina screens are handled: screenshots are scaled from the logical screen size.
-- **Windows**: the agent turns on DPI awareness so the pointer and screenshots use the same pixels when display scaling is on. Run the terminal as your normal user, not as administrator.
-- **Linux**: needs an X11 session. pyautogui cannot control the mouse under Wayland. The overlay needs `python3-tk`.
+- **Windows 10/11**: works as is: no permissions to grant. The bubble stays above other windows (not above the Start menu, the lock screen or exclusive-fullscreen games) and on every virtual desktop. On Windows 10 version 2004 or newer it is invisible in screenshots, so the model never sees it. LeanWatch can't control apps that run as administrator, unless it runs as administrator too.
+- **macOS**: allow your terminal (or Python) under System Settings → Privacy & Security → **Accessibility** (to move the mouse and for the shortcut) and **Screen Recording** (to take screenshots), then restart it. Install `pyobjc-framework-Cocoa` (included in `requirements.txt` on macOS) so the bubble floats over full-screen apps and on every Space.
+- **Linux**: works on X11 desktops (GNOME on Xorg, KDE, Xfce, …). Under Wayland, LeanWatch runs through XWayland, and some desktops keep native Wayland apps above it; log in with an "Xorg" session for full control.
 
 ## Safety
 
 - Nothing moves until you grant permission, and you choose pointer and keyboard separately.
-- Stop at any time: <kbd>Esc</kbd> in the page, the Stop button, or push the mouse into a screen corner (pyautogui's fail-safe).
+- Stop at any time: **Stop** or <kbd>Esc</kbd> in the box, or push the mouse into a screen corner (pyautogui's fail-safe).
 - If you move the mouse yourself, the agent pauses and waits for **Resume**.
 - Deleting, sending, buying, installing and changing security settings need your **Allow**. Typed text that looks destructive (`rm -rf`, `format`, `sudo`, …) is held back for approval even if the model didn't ask.
 - Text on web pages and in documents is treated as information, never as instructions, to resist prompt injection.
+- The box never shows up in the model's screenshots or under its clicks: the operating system leaves it out of screenshots where it can, and otherwise it steps aside for a moment.
+- After you click in the box during a task, the keyboard goes straight back to your app, so LeanWatch's typing never lands in the wrong place.
 - The agent listens only on `127.0.0.1`, rejects other Host headers and other websites' origins, and needs a random session token that only the page it opens (and `~/.leanwatch/session.json`, mode 600) knows.
 
 ## How it works
 
-Both modes run the same loop a robot does: **look** at the screen, **decide** the next move, **act**, then **check** the result.
+The practice screen and your real computer run the same loop a robot does: **look** at the screen, **decide** the next move, **act**, then **check** the result.
 
 ```
 web/
@@ -83,6 +90,10 @@ web/
   tests/smoke.mjs      Playwright end-to-end test
 
 agent/leanwatch/
+  bubble.py            the floating bubble and command box (Qt), and the shield that keeps them out of the model's way
+  native.py            per-OS details: stay on top everywhere, screenshot exclusion, keyboard hand-back, shortcut
+  desktop.py           runs the bubble (main thread) and the agent server (background thread)
+  autostart.py         start at login on Windows, macOS and Linux
   local_brain.py       default brain: open GUI model on this computer (screenshot -> Thought + Action)
   actions.py           UI-TARS action language: parse answers, write training targets, coordinate spaces
   local_prompts.py     the prompt and conversation, shared by training and the agent
@@ -91,8 +102,8 @@ agent/leanwatch/
   controller.py        executes the 17 computer-use actions with pyautogui
   screen.py            screenshots, scaling and coordinate mapping
   permissions.py       consent scopes and risky-action rules
-  server.py            aiohttp server: page, WebSocket bridge, API for the overlay
-  overlay.py           always-on-top command box (tkinter)
+  risk.py              spots hard-to-undo steps in the model's explanation (6 languages)
+  server.py            the agent session; aiohttp server for the optional web control center
   __main__.py          command line
 
 training/              data engine, dataset importers, LoRA/QLoRA fine-tuning, evaluation
@@ -105,7 +116,7 @@ training/              data engine, dataset importers, LoRA/QLoRA fine-tuning, e
 ## Tests
 
 ```bash
-cd agent && pip install -r requirements-dev.txt && python -m pytest   # no API key, display or model download needed
+cd agent && pip install -r requirements-dev.txt && python -m pytest   # no API key, display or model download needed (the bubble runs offscreen)
 cd training && python -m pytest                                       # whole training pipeline with a tiny model on CPU
 npm install && npm test                                               # 26 browser checks on the practice screen
 ```

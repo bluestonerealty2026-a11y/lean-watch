@@ -6,7 +6,7 @@
   const LW = window.LW;
   const { h, store } = LW.util;
 
-  const UPDATED = "14 Oct 2026";
+  const UPDATED = "15 Oct 2026";
   const STORE_KEY = "lw-progress-v1";
   const STATUSES = ["planned", "next", "doing", "done"];
   const LABEL = { planned: "Planned", next: "Next", doing: "In progress", done: "Done" };
@@ -37,7 +37,9 @@
         { id: "actions", title: "UI-TARS action language: parser, writer, coordinate spaces", where: "agent/leanwatch/actions.py", status: "done", tags: ["NLP"] },
         { id: "claude", title: "Optional Claude brain for comparison", where: "agent/leanwatch/brain.py", status: "done", tags: ["LLM"] },
         { id: "server", title: "Local server: serves this page, WebSocket bridge, token and host checks", where: "agent/leanwatch/server.py", status: "done", tags: ["Safety"] },
-        { id: "overlay", title: "Always-on-top command box in the corner of every screen", where: "agent/leanwatch/overlay.py", status: "done", tags: ["UI"] },
+        { id: "overlay", title: "Floating cursor bubble on top of every app; click it to open the command box", where: "agent/leanwatch/bubble.py", status: "done", tags: ["UI"] },
+        { id: "shield", title: "Keep the bubble out of the model's screenshots and from under its clicks", where: "agent/leanwatch/bubble.py, native.py", status: "done", tags: ["CV", "Safety"] },
+        { id: "x11test", title: "Real-input test of the bubble on a Linux desktop (click, type, Allow, drag)", where: "agent/tests/x11/", status: "done", tags: ["Testing"] },
         { id: "safety", title: "Scopes, risky-action confirmation, take-over pause, fail-safe corner", where: "agent/leanwatch/permissions.py", status: "done", tags: ["Safety"] },
         { id: "unit", title: "Unit tests that need no API key, display or model download", where: "agent/tests/", status: "done", tags: ["Testing"] },
         { id: "firstrun", title: "First live run with UI-TARS-1.5-7B on a real desktop", where: "python -m leanwatch", status: "next", tags: ["Testing"] },
@@ -49,7 +51,7 @@
       id: "product", title: "Ready for people who are not programmers",
       tasks: [
         { id: "installer", title: "One-click installer (PyInstaller) and desktop shortcut", status: "planned", tags: ["Packaging"] },
-        { id: "autostart", title: "Start the corner command box when the computer starts", status: "planned", tags: ["UI"] },
+        { id: "autostart", title: "Start the bubble when you log in (Windows, macOS, Linux)", where: "agent/leanwatch/autostart.py", status: "done", tags: ["UI"] },
         { id: "voice", title: "Speak commands instead of typing (speech-to-text, e.g. Whisper)", status: "planned", tags: ["Speech", "NLP"] },
         { id: "lessons", title: "Save a finished task as a lesson to replay later", status: "planned", tags: ["Learning"] },
         { id: "i18n", title: "Narration in other languages", status: "planned", tags: ["NLP"] },
