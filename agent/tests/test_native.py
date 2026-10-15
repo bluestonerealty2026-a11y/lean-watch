@@ -274,3 +274,21 @@ def test_windows_focus_tracker_skips_the_taskbar(monkeypatch):
 
 def test_dpi_awareness_is_windows_only():
     native.enable_dpi_awareness("linux")                      # no-op, no error
+
+
+def test_mac_hotkey_with_the_letter_a(monkeypatch):
+    m, *_ = mac(monkeypatch)
+    seen = {}
+    constants = types.SimpleNamespace(kVK_Space=0x31, kVK_ANSI_A=0)          # A really is key code 0
+
+    def quickHotKey(virtualKey, modifierMask):
+        seen["key"] = virtualKey
+
+        def wrap(fn):
+            fn.unregister = lambda: None
+            return fn
+        return wrap
+
+    monkeypatch.setitem(sys.modules, "quickmachotkey", types.SimpleNamespace(quickHotKey=quickHotKey, constants=constants))
+    monkeypatch.setitem(sys.modules, "quickmachotkey.constants", constants)
+    assert m.register_hotkey("cmd+shift+a", lambda: None) is not None and seen["key"] == 0

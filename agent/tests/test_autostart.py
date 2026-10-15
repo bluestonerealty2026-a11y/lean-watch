@@ -130,3 +130,22 @@ def test_controller_moves_the_bubble_out_of_the_way_of_clicks_only():
     c.execute("left_click_drag", {"start_coordinate": [10, 10], "coordinate": [20, 20]})
     c.execute("key", {"text": "ctrl+s"})
     assert shield.calls == [[(900, 700)], [(10, 10), (20, 20)]]
+
+
+def test_launcher_is_utf8_and_paths_are_absolute(tmp_path, monkeypatch):
+    import leanwatch.autostart as auto
+
+    home = tmp_path / "José Ñúñez"
+    run = home / "runs" / "my-model"
+    run.mkdir(parents=True)
+    monkeypatch.chdir(home)
+    monkeypatch.setattr(auto, "Autostart", lambda: Autostart(home=home, platform="linux"))
+    main(["--autostart", "on", "--adapter", "runs/my-model", "--language", "Español"])
+    launcher = (home / ".leanwatch" / "start_leanwatch.py").read_bytes().decode("utf-8")
+    assert str(run) in launcher and "Español" in launcher
+    compile(launcher, "launcher", "exec")
+
+
+def test_abbreviated_autostart_option_is_refused(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["--auto", "on"])

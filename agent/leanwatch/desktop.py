@@ -65,18 +65,6 @@ def _xcb_cursor_available() -> bool:
     return ctypes.util.find_library("xcb-cursor") is not None
 
 
-def preload_model(session) -> None:
-    """Load the local model in the background so the first task starts quickly."""
-    def work():
-        try:
-            session.ensure_model()
-            session.narrate("The model is loaded. I'm ready.", "thinking")
-        except Exception as err:
-            session.narrate(f"Could not load the model yet: {err}", "thinking")
-
-    threading.Thread(target=work, daemon=True, name="leanwatch-preload").start()
-
-
 def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY) -> int:
     from .native import enable_dpi_awareness
 
@@ -131,13 +119,14 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
     url = f"http://127.0.0.1:{cfg.port}/?token={token}"
 
     bubble = BubbleApp(session, native, settings_path=Path.home() / ".leanwatch" / "bubble.json")
-    bubble.show()
     stop_hotkey = None
     if hotkey:
         try:
             stop_hotkey = native.register_hotkey(hotkey, bubble.hotkey_pressed.emit)
         except Exception as err:
             print(f"  Shortcut {hotkey} is not available: {err}")
+    bubble.shortcut_ok = stop_hotkey is not None   # decides whether "Hide the bubble" is safe to offer
+    bubble.show()
 
     pretty = "+".join(p.capitalize() for p in hotkey.split("+")) if hotkey else ""
     print("LeanWatch is ready.")
@@ -155,6 +144,8 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
     if web_page:
         webbrowser.open(url)
     if cfg.preload and cfg.brain == "local":
+        from .server import preload_model
+
         preload_model(session)
 
     # Let Ctrl+C in the terminal quit: Python only handles signals while it runs Python code.

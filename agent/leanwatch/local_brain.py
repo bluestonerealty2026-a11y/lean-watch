@@ -31,6 +31,19 @@ APPROVAL_TURNS = 2
 END_MARKERS = ("<|im_end|>", "<|endoftext|>", "</s>", "<|end_of_text|>", "<|eot_id|>")
 
 
+def describe_step(thought: str, action) -> str:
+    """The question shown before a risky step: the model's explanation plus exactly what will be typed or pressed."""
+    detail = ""
+    if action.name == "type" and action.text:
+        shown = action.text.rstrip("\n")
+        detail = f"Type “{shown[:120]}{'…' if len(shown) > 120 else ''}”" + (" and press Enter" if action.text.endswith("\n") else "")
+    elif action.name in ("hotkey", "press", "keydown") and action.text:
+        detail = f"Press {action.text}"
+    if thought and detail:
+        return f"{thought}\n{detail}"
+    return thought or detail or action.name
+
+
 def clean_reply(text: str, extra_markers=()) -> str:
     """Cut a raw decoded answer at the end-of-turn marker, keeping other special tokens.
 
@@ -162,6 +175,7 @@ class LocalBrain:
         past: list[dict] = []
         bad_answers = 0
         self.approved_turns = 0
+        self.approved_text = ""
         self.ask_every_step = not language_checked(self.cfg.language)
         try:
             for _ in range(self.cfg.max_turns):
@@ -208,7 +222,8 @@ class LocalBrain:
             return [round(p[0] * sx), round(p[1] * sy)]
 
         asked = False
-        pre_approved = self.approved_turns > 0
+        approved_now = False
+        turn_has_approval = self.approved_turns > 0
         self.approved_turns = max(0, self.approved_turns - 1)
         for a in parsed.actions:
             check_stop(self.stop)
@@ -218,17 +233,27 @@ class LocalBrain:
                 question = a.text or parsed.thought or "May I continue?"
                 if not self.hooks.confirm(question, "The assistant wants your OK before this step."):
                     return RunResult(False, f"You said no to: {question} Nothing more was done."), None
-                self.approved_turns = APPROVAL_TURNS
+                # The approval carries over to the steps that carry it out (e.g. "click Delete", then the
+                # app's own "Delete?" dialog), but only for the same kind of thing the person agreed to.
+                self.approved_turns = 1 if self.ask_every_step else APPROVAL_TURNS
+                self.approved_text = (question + " " + (parsed.thought or "")).lower()
                 return None, APPROVED_NOTE
-            if a.name not in PASSIVE_ACTIONS and not asked and not pre_approved:
+            if a.name not in PASSIVE_ACTIONS and not asked:
                 reason = risky_intent(parsed.thought)
-                if reason or self.ask_every_step:
+                covered = turn_has_approval and (reason is None and self.ask_every_step or
+                                                 reason is not None and reason in self.approved_text)
+                if covered:
+                    approved_now = True
+                elif reason or self.ask_every_step:
                     asked = True
                     why = (f"This step mentions “{reason}”, which can be hard to undo." if reason else
                            f"LeanWatch can't check {self.cfg.language} explanations for risky steps, so it asks before each one.")
-                    if not self.hooks.confirm(parsed.thought or a.name, why):
+                    if not self.hooks.confirm(describe_step(parsed.thought, a), why):
                         return RunResult(False, "You said no, so I stopped before that step."), None
+                    approved_now = True
             try:
+                # The person has just seen and allowed this exact step: the controller needn't ask again.
+                self.controller.preapproved = approved_now and a.name in ("type", "hotkey", "press", "keydown")
                 self._do(a, at)
             except PermissionDenied as err:
                 return None, f"That action was refused: {err}"
@@ -236,6 +261,8 @@ class LocalBrain:
                 raise
             except Exception as err:  # bad coordinates, unknown key, ...
                 return None, f"That action failed: {err}. Try a different way."
+            finally:
+                self.controller.preapproved = False
         self.hooks.preview()
         return None, None
 

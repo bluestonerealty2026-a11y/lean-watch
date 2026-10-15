@@ -34,6 +34,7 @@ def gui_python(executable: str = sys.executable, platform: str = sys.platform) -
 
 def launcher_source(args: list[str], agent_dir: Path = AGENT_DIR) -> str:
     return (
+        "# -*- coding: utf-8 -*-\n"
         "# Written by `python -m leanwatch --autostart on`. Starts LeanWatch at login.\n"
         "import sys\n"
         "from pathlib import Path\n"
@@ -85,7 +86,7 @@ class Autostart:
     # install / remove
     def install(self, args: list[str]) -> str:
         self.launcher.parent.mkdir(parents=True, exist_ok=True)
-        self.launcher.write_text(launcher_source(args))
+        self.launcher.write_text(launcher_source(args), encoding="utf-8")   # Python reads source as UTF-8
         python = gui_python(self.executable, self.platform)
         if self.platform == "win32":
             command = f'"{python}" "{self.launcher}"'
@@ -119,7 +120,7 @@ class Autostart:
             return (f"LeanWatch will start when you log in to your Mac ({entry}). macOS asks for permissions again for "
                     "the Python it starts at login: allow 'Python' under System Settings > Privacy & Security > "
                     "Accessibility and Screen Recording.")
-        entry.write_text(
+        entry.write_text(encoding="utf-8", data=
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=LeanWatch\n"

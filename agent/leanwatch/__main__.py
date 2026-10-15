@@ -15,6 +15,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = Config()
     p = argparse.ArgumentParser(
         prog="python -m leanwatch",
+        allow_abbrev=False,          # --autostart saves the other options; an abbreviation would slip through
         description="Let an AI model move your mouse and keyboard while you watch and learn. "
                     "Starts a floating bubble that stays on top of every app: click it and type what you need.",
     )
@@ -85,8 +86,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.autostart == "off":
             print(auto.remove())
         else:
-            keep = [a for a in (argv if argv is not None else sys.argv[1:])]
-            print(auto.install(strip_option(keep, "--autostart", takes_value=True)))
+            keep = strip_option(list(argv if argv is not None else sys.argv[1:]), "--autostart", takes_value=True)
+            print(auto.install(absolute_paths(keep)))
         return
 
     if args.cli:
@@ -104,6 +105,18 @@ def main(argv: list[str] | None = None) -> None:
 
     hotkey = None if args.hotkey.strip().lower() in ("", "none", "off") else args.hotkey
     raise SystemExit(run(cfg, web_page=args.web, hotkey=hotkey))
+
+
+def absolute_paths(argv: list[str]) -> list[str]:
+    """At login LeanWatch starts in another folder, so saved folders (--adapter, a local --model) must be absolute."""
+    out = list(argv)
+    for i, a in enumerate(out):
+        for opt in ("--adapter", "--model"):
+            if a == opt and i + 1 < len(out) and os.path.exists(out[i + 1]):
+                out[i + 1] = os.path.abspath(out[i + 1])
+            elif a.startswith(opt + "=") and os.path.exists(a.split("=", 1)[1]):
+                out[i] = f"{opt}={os.path.abspath(a.split('=', 1)[1])}"
+    return out
 
 
 def strip_option(argv: list[str], name: str, takes_value: bool = False) -> list[str]:

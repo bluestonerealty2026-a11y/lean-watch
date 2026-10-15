@@ -69,10 +69,11 @@ class FakeNative(Native):
         return tracker
 
 
-def make(qapp, tmp_path=None, granted=False, excluded=False):
+def make(qapp, tmp_path=None, granted=False, excluded=False, shortcut=True):
     session = FakeSession(granted)
     native = FakeNative(excluded)
     app = BubbleApp(session, native, settings_path=(tmp_path / "bubble.json") if tmp_path else None)
+    app.shortcut_ok = shortcut          # desktop.run sets this once the keyboard shortcut is registered
     app.show()
     qapp.processEvents()
     return app, session, native
@@ -165,6 +166,17 @@ def test_saved_position_on_a_missing_monitor_falls_back_to_the_corner(qapp, tmp_
     area = QApplication.primaryScreen().availableGeometry()
     assert area.contains(app.bubble.frameGeometry())
     close(app)
+
+
+def test_bubble_cannot_be_hidden_when_nothing_could_bring_it_back(qapp, tmp_path):
+    app, _, _ = make(qapp, tmp_path, shortcut=False)      # and the offscreen platform has no tray
+    app.set_hidden(True)
+    assert app.bubble.isVisible() and not app.hidden_by_user
+    close(app)
+    (tmp_path / "bubble.json").write_text('{"x": 10, "y": 10, "hidden": true}')
+    again, _, _ = make(qapp, tmp_path, shortcut=False)  # a saved "hidden" is ignored too
+    assert again.bubble.isVisible()
+    close(again)
 
 
 def test_hiding_the_bubble_is_remembered(qapp, tmp_path):
@@ -453,15 +465,78 @@ def test_exclusion_is_double_checked_with_a_real_grab(qapp):
     close(app)
 
 
-def test_clicking_the_box_during_a_task_gives_the_keyboard_back(qapp):
+def test_keys_go_back_to_the_app_before_the_agent_types(qapp):
+    """The agent asks for the keyboard right before typing; if the person clicked into the box, it moves first."""
     app, session, native = make(qapp, granted=True)
     app.expand()
     app.submit("open settings")
     before = native.restored
-    app.panel.isActiveWindow = lambda: True       # e.g. the person just clicked Allow
-    QApplication.sendEvent(app.panel, QEvent(QEvent.WindowActivate))
+    app.panel.isActiveWindow = lambda: True       # the person clicked into the box during the task
     pump(qapp, 0.3)
-    assert native.restored > before          # (the offscreen platform may deliver its own activation too)
+    assert native.restored == before              # no timer takes the keyboard away from the person
+    assert run_in_worker(qapp, lambda: app.shield.before_keys() or True)
+    assert native.restored == before + 1          # ...but it moves back right before the agent types
+    app.panel.isActiveWindow = lambda: False
+    run_in_worker(qapp, lambda: app.shield.before_keys())
+    assert native.restored == before + 1          # nothing to do when the box doesn't have it
+    close(app)
+
+
+def test_allow_gives_the_keyboard_back_before_the_agent_continues(qapp):
+    app, session, native = make(qapp, granted=True)
+    order = []
+    app.focus._activate = lambda h: order.append(("focus", h))
+    session_handle = session.handle
+    session.handle = lambda m: (order.append(("send", m["type"])), session_handle(m))[1]
+    app.expand()
+    app.submit("send the email")
+    app.focus._current = lambda: "mail app"       # the agent is working in the mail app
+    app._on_event({"type": "confirm_request", "id": "q1", "action": "Send the email?", "reason": "send"})
+    app.focus._current = lambda: "chat app"       # the person checks something in another app meanwhile
+    app.focus.poll()
+    app.panel.isActiveWindow = lambda: True       # ...then clicks Allow in the box
+    order.clear()
+    app._answer(True)
+    assert order == [("focus", "mail app"), ("send", "confirm")]   # the agent's app, and first
+    close(app)
+
+
+def test_expired_question_is_cleared(qapp):
+    app, session, _ = make(qapp, granted=True)
+    app.expand()
+    app.submit("x")
+    app._on_event({"type": "confirm_request", "id": "q9", "action": "Delete?", "reason": "delete"})
+    assert app.panel.confirm.isVisible() and app.bubble.attention
+    app._on_event({"type": "confirm_closed", "id": "q9", "allow": False, "timed_out": True})
+    assert not app.panel.confirm.isVisible() and not app.bubble.attention and app.confirm_id is None
+    assert "skipped" in app.panel.activity.text()
+    app.collapse()
+    assert not app.panel.isVisible()              # no stale question blocking the box any more
+    close(app)
+
+
+def test_opening_the_box_during_a_screenshot_waits_until_it_is_taken(qapp):
+    app, session, _ = make(qapp, granted=True)
+    app.shield.settle_s = 0.0
+    seen = {}
+
+    def capture():
+        with app.shield.cloak():
+            time.sleep(0.15)                       # the person presses the shortcut in the middle of it
+            seen["panel"] = app.panel.isVisible()
+        return True
+
+    t = threading.Thread(target=capture)
+    t.start()
+    end = time.monotonic() + 0.05
+    while time.monotonic() < end:
+        qapp.processEvents()
+    app.open_from_hotkey()
+    while t.is_alive():
+        qapp.processEvents()
+    pump(qapp, 0.1)
+    assert seen["panel"] is False                  # not in the model's screenshot
+    assert app.panel.isVisible() and not app.bubble.isVisible()   # shown afterwards, without the bubble on top
     close(app)
 
 

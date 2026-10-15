@@ -57,11 +57,13 @@ class FocusTracker:
         except Exception:
             pass
 
-    def restore(self) -> None:
-        if self.last is None:
+    def restore(self, target=None) -> None:
+        """Give the keyboard to `target` (e.g. the app the agent was working in), else to the last app used."""
+        target = target if target is not None else self.last
+        if target is None:
             return
         try:
-            self._activate(self.last)
+            self._activate(target)
         except Exception:
             pass
 
@@ -437,8 +439,12 @@ class MacNative(Native):
             from quickmachotkey import quickHotKey
         except Exception:
             return self._monitor_hotkey(mods, key, callback)
-        vkey = (K.kVK_Space if key == "space" else getattr(K, f"kVK_ANSI_{key.upper()}", None)
-                or getattr(K, f"kVK_{key.upper()}", None))
+        if key == "space":
+            vkey = K.kVK_Space
+        else:
+            vkey = getattr(K, f"kVK_ANSI_{key.upper()}", None)   # kVK_ANSI_A is 0, so test for None
+            if vkey is None:
+                vkey = getattr(K, f"kVK_{key.upper()}", None)
         if vkey is None:
             return None
         mask = 0

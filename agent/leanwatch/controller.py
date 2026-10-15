@@ -285,6 +285,7 @@ class Controller:
         self.platform = platform
         # The desktop bubble: clear_of(points) moves LeanWatch's windows out of the way of a click.
         self.shield = shield
+        self.preapproved = False   # set for one keyboard action the person has just approved
         self._expected: tuple[int, int] | None = None
 
     # ---------------- helpers ----------------
@@ -392,6 +393,8 @@ class Controller:
         # model was thinking), stop before typing: the keys would go to whatever they clicked.
         self._check_takeover()
         if name in ("type", "key", "hold_key"):
+            if self.shield is not None and hasattr(self.shield, "before_keys"):
+                self.shield.before_keys()      # if the person clicked into LeanWatch's box, keys go back to the app first
             return self._keyboard(name, inp)
 
         button = {"right_click": "right", "middle_click": "middle"}.get(name, "left")
@@ -445,9 +448,11 @@ class Controller:
     def _keyboard(self, name: str, inp: dict):
         b = self.backend
         text = str(inp.get("text", ""))
+        # The brain already showed the person this exact step and they allowed it: don't ask twice.
+        approved, self.preapproved = self.preapproved, False
         if name == "type":
             reason = risky_text(text)
-            if reason and not self.confirm(f"Type “{text[:80]}”", f"This {reason}."):
+            if reason and not approved and not self.confirm(f"Type “{text[:80]}”", f"This {reason}."):
                 raise PermissionDenied("The user declined typing this text. Do not try it another way; explain what you skipped.")
             for chunk_start in range(0, len(text), 40):
                 if self.stop.is_set():
@@ -455,7 +460,7 @@ class Controller:
                 b.write(text[chunk_start:chunk_start + 40])
             return "OK"
         reason = risky_key(text)
-        if reason and not self.confirm(f"Press {text}", f"This {reason}."):
+        if reason and not approved and not self.confirm(f"Press {text}", f"This {reason}."):
             raise PermissionDenied("The user declined this key press.")
         keys = parse_combo(text, self.platform)
         if not keys:

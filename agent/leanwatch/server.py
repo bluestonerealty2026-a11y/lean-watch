@@ -227,6 +227,8 @@ class Session(Hooks):
     def resume(self) -> None:
         if self.paused_flag:
             self.paused_flag = False
+            if self.controller is not None:
+                self.controller.resync()   # moving the mouse to press Resume is not taking over again
             self.resume_event.set()
             self.emit({"type": "resumed"})
 
@@ -255,8 +257,10 @@ class Session(Hooks):
         event = threading.Event()
         self.pending[cid] = {"event": event, "allow": False}
         self.emit({"type": "confirm_request", "id": cid, "action": action, "reason": reason})
-        event.wait(self.cfg.confirm_timeout_s)
+        answered = event.wait(self.cfg.confirm_timeout_s)
         allow = self.pending.pop(cid, {}).get("allow", False) and not self.stop_event.is_set()
+        # Tell every view the question is over (answered somewhere, stopped, or no answer in time).
+        self.emit({"type": "confirm_closed", "id": cid, "allow": allow, "timed_out": not answered})
         self.narrate(f"You {'allowed' if allow else 'declined'}: {action}.", "thinking")
         if self.controller is not None:
             # The person moved the mouse to answer; that is not taking over, so don't pause for it.
@@ -361,6 +365,18 @@ def make_app(cfg: Config, token: str) -> web.Application:
     return app
 
 
+def preload_model(session) -> None:
+    """Load the local model in the background (--preload) so the first task starts quickly."""
+    def work():
+        try:
+            session.ensure_model()
+            session.narrate("The model is loaded. I'm ready.", "thinking")
+        except Exception as err:
+            session.narrate(f"Could not load the model yet: {err}", "thinking")
+
+    threading.Thread(target=work, daemon=True, name="leanwatch-preload").start()
+
+
 def write_session_file(cfg: Config, token: str) -> Path:
     path = cfg.session_file
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -393,6 +409,8 @@ def serve(cfg: Config) -> None:
     async def after_start(_app):
         if cfg.open_browser:
             webbrowser.open(url)
+        if cfg.preload and cfg.brain == "local":
+            preload_model(session)
 
     async def cleanup(_app):
         try:

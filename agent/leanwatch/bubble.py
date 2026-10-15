@@ -532,12 +532,17 @@ class Shield(QObject):
 
     _hide = Signal()
     _show = Signal()
+    _keys = Signal()
 
-    def __init__(self, windows, rect_px, settle_s: float = SETTLE_S):
+    def __init__(self, windows, rect_px, settle_s: float = SETTLE_S, wanted=None, release_keyboard=None):
         super().__init__()
         self.windows = windows                 # callable -> list of our top-level widgets
         self.rect_px = rect_px                 # callable: widget -> (x0, y0, x1, y1) in mouse pixels, or None
         self.settle_s = settle_s
+        # callable: widget -> should it be on screen right now? (decided when a cloak ends, from the
+        # current state, so opening or hiding things during a screenshot isn't undone afterwards)
+        self.wanted = wanted
+        self.release_keyboard = release_keyboard or (lambda: None)
         self.excluded_from_capture = False     # set when the OS hides our windows from screenshots
         self._lock = threading.Lock()
         self._depth = 0
@@ -545,6 +550,27 @@ class Shield(QObject):
         self._rects: list[tuple[int, int, int, int]] = []
         self._hide.connect(self._do_hide, Qt.BlockingQueuedConnection)
         self._show.connect(self._do_show, Qt.QueuedConnection)
+        self._keys.connect(self._do_release_keyboard, Qt.BlockingQueuedConnection)
+
+    def cloaked(self) -> bool:
+        """True while our windows must stay off the screen (a screenshot or a click is under way)."""
+        with self._lock:
+            return self._depth > 0
+
+    def before_keys(self) -> None:
+        """Called by the agent right before it types or presses keys: if the person clicked into the
+        LeanWatch box, the keyboard goes back to the app being worked on first (and we wait for that)."""
+        if on_gui_thread():
+            self._do_release_keyboard()
+        else:
+            self._keys.emit()
+
+    @Slot()
+    def _do_release_keyboard(self) -> None:
+        try:
+            self.release_keyboard()
+        except Exception:
+            pass
 
     # called on the GUI thread whenever a window moves, resizes, shows or hides
     def refresh(self) -> None:
@@ -614,8 +640,9 @@ class Shield(QObject):
         with self._lock:
             if self._depth:
                 return  # another cloak started in the meantime
-        for w in self._hidden:
-            w.show()
+        for w in self.windows() if self.wanted else self._hidden:
+            if self.wanted is None or self.wanted(w):
+                w.show()
         self._hidden = []
         self.refresh()
 
@@ -657,9 +684,11 @@ class BubbleApp(QObject):
         self.confirm_id: str | None = None
         self.steps: list[str] = []
         self.hidden_by_user = False
+        self.shortcut_ok = False                 # set by desktop.run when the keyboard shortcut works
+        self.work_window = None                  # the app the agent was working in when it asked or paused
         self.focus = native.focus_tracker()
 
-        self.shield = Shield(self.windows, self._rect_px)
+        self.shield = Shield(self.windows, self._rect_px, wanted=self._wanted, release_keyboard=self._release_keyboard)
         self.session.shield = self.shield
 
         self.bubble.clicked.connect(self.toggle)
@@ -702,6 +731,8 @@ class BubbleApp(QObject):
             w.winId()                     # create the native window so the OS tweaks can apply
             self.native.prepare_window(w)
         self.shield.excluded_from_capture = all(self.native.exclude_from_capture(w) for w in self.windows())
+        if self.hidden_by_user and not self._can_unhide():
+            self.hidden_by_user = False           # no tray and no shortcut: hiding would leave no way back
         if not self.hidden_by_user:
             self.bubble.show()
         self.shield.refresh()
@@ -711,18 +742,29 @@ class BubbleApp(QObject):
     def eventFilter(self, obj, event) -> bool:
         if event.type() in (QEvent.Move, QEvent.Resize, QEvent.Show, QEvent.Hide):
             self.shield.refresh()
-        if event.type() == QEvent.WindowActivate and obj is self.panel and self.running:
-            # Clicking Stop, Allow or Resume makes the box the active window, and the agent's next
-            # keystrokes would land in it. Hand the keyboard back once the click is done.
-            QTimer.singleShot(150, self._return_keyboard)
         if event.type() == QEvent.Show:
             # Window managers forget "on every desktop / above others" when a window hides; set it again.
             QTimer.singleShot(0, lambda w=obj: self._after_show(w))
         return False
 
-    def _return_keyboard(self) -> None:
-        if self.running and self.panel.isActiveWindow():
-            self.focus.restore()
+    def _wanted(self, w) -> bool:
+        if w is self.panel:
+            return self.expanded
+        return not self.expanded and not self.hidden_by_user
+
+    def _show_window(self, w) -> None:
+        """Show a window, unless a screenshot or a shielded click is under way: then the Shield shows
+        it when that ends (from the state at that moment), so it never appears in the model's picture."""
+        if not self.shield.cloaked():
+            w.show()
+
+    def _release_keyboard(self) -> None:
+        """Before the agent types: if the LeanWatch box has the keyboard, give it to the app being worked on."""
+        if self.panel.isActiveWindow():
+            self.focus.restore(self.work_window)
+
+    def _can_unhide(self) -> bool:
+        return self.tray is not None or self.shortcut_ok
 
     def verify_exclusion(self, grab=None) -> bool:
         """Check that the OS really keeps our windows out of screenshots: grab the bubble's spot with the
@@ -743,8 +785,8 @@ class BubbleApp(QObject):
             self.shield.excluded_from_capture = False
             return False
         finally:
-            if not self.hidden_by_user and not self.expanded:
-                self.bubble.show()
+            if self._wanted(self.bubble):
+                self._show_window(self.bubble)
         if shown != hidden:
             self.shield.excluded_from_capture = False
         return self.shield.excluded_from_capture
@@ -814,11 +856,13 @@ class BubbleApp(QObject):
         self.focus.poll()                     # the app the person was using, to give it back the keyboard
         self._check_permissions()
         self.panel.place(self.bubble.frameGeometry(), self._area())
-        self.bubble.hide()
-        self.panel.show()
-        self.panel.raise_()
         self.expanded = True
-        if focus and not self.running:
+        self.bubble.hide()
+        self._show_window(self.panel)
+        self.panel.raise_()
+        if focus:
+            # Also while a task runs (so Esc and Stop work from the keyboard): the agent takes the
+            # keyboard back right before it types (Shield.before_keys).
             self.native.activate_own(self.panel)
             self.panel.activateWindow()
             self.panel.input.setFocus(Qt.OtherFocusReason)
@@ -828,12 +872,12 @@ class BubbleApp(QObject):
         if self.confirm_id or self.pending_text:
             return                            # a question is waiting; keep it on screen
         # Give the keyboard back first: hiding the active window would let the OS pick some other window.
-        if not self.running and self.panel.isActiveWindow():
-            self.focus.restore()
+        if self.panel.isActiveWindow():
+            self.focus.restore(self.work_window if self.running else None)
         self.panel.hide()
         self.expanded = False
         if not self.hidden_by_user:
-            self.bubble.show()
+            self._show_window(self.bubble)
         self.shield.refresh()
 
     def _check_permissions(self) -> None:
@@ -865,13 +909,15 @@ class BubbleApp(QObject):
             self.expand(focus=True)
 
     def set_hidden(self, hidden: bool) -> None:
+        if hidden and not self._can_unhide():
+            hidden = False                        # never hide the only way back to LeanWatch
         self.hidden_by_user = hidden
         if hidden:
+            self.expanded = False
             self.panel.hide()
             self.bubble.hide()
-            self.expanded = False
-        else:
-            self.bubble.show()
+        elif not self.expanded:
+            self._show_window(self.bubble)
         self._save_settings()
         self.shield.refresh()
 
@@ -919,6 +965,8 @@ class BubbleApp(QObject):
 
     def resume(self) -> None:
         self.panel.paused.hide()
+        # Keyboard back to the app the agent was working in *before* it continues (it may type at once).
+        self._release_keyboard()
         self.session.handle({"type": "resume"})
         self.panel.refit()
 
@@ -926,6 +974,8 @@ class BubbleApp(QObject):
         cid, self.confirm_id = self.confirm_id, None
         self.panel.confirm.hide()
         self.bubble.set_attention(False)
+        if allow:
+            self._release_keyboard()
         if cid:
             self.session.handle({"type": "confirm", "id": cid, "allow": allow})
         self.panel.refit()
@@ -937,6 +987,7 @@ class BubbleApp(QObject):
         p = self.panel
         if kind == "run_started":
             self.running = True
+            self.work_window = None
             self.steps = []
             p.set_notice(f"“{msg.get('text', '')}”")
             p.show_steps([])
@@ -960,12 +1011,24 @@ class BubbleApp(QObject):
         elif kind == "action":
             p.show_activity(str(msg.get("summary", "")))
         elif kind == "confirm_request":
+            self.focus.poll()
+            self.work_window = self.focus.last     # the agent's app; the person may use others meanwhile
             self.confirm_id = str(msg.get("id"))
             p.confirm.ask(str(msg.get("action", "May I do this?")), str(msg.get("reason", "")), warn=True)
             self.bubble.set_attention(True)
             if not self.expanded:
                 self.expand(focus=False)
+        elif kind == "confirm_closed":
+            if str(msg.get("id")) != self.confirm_id:
+                return                              # already answered here
+            self.confirm_id = None
+            p.confirm.hide()
+            self.bubble.set_attention(False)
+            if msg.get("timed_out"):
+                p.show_activity("No answer, so I skipped that step.")
         elif kind == "paused":
+            self.focus.poll()
+            self.work_window = self.focus.last
             p.paused.ask("Paused", str(msg.get("reason", "")))
             p.set_state("Paused")
             if not self.expanded:
@@ -997,8 +1060,11 @@ class BubbleApp(QObject):
     # ---------------- menu, tray and settings ----------------
     def _menu_actions(self, menu: QMenu) -> None:
         menu.addAction("Open the command box", lambda: self.expand(focus=True))
-        menu.addAction("Show the bubble" if self.hidden_by_user else "Hide the bubble",
-                       lambda: self.set_hidden(not self.hidden_by_user))
+        if self.hidden_by_user:
+            menu.addAction("Show the bubble", lambda: self.set_hidden(False))
+        elif self._can_unhide():
+            how = "the tray icon" if self.tray is not None else "the keyboard shortcut"
+            menu.addAction(f"Hide the bubble (bring it back with {how})", lambda: self.set_hidden(True))
         menu.addAction("Move to the bottom-right corner", self._reset_position)
         menu.addSeparator()
         if self.running:

@@ -284,3 +284,55 @@ def test_point_style_drag_uses_start_point():
     space = CoordSpace("abs", 1000, 625)
     text = format_action({"type": "drag", "x1": 10, "y1": 10, "x2": 100, "y2": 10}, space, "point")
     assert text.startswith("drag(start_point='<point>") and "end_point='<point>" in text
+
+
+# --------------------------------------------------------------------------- second review round
+@pytest.mark.parametrize("thought", [
+    "I click Sell to sell 10 shares.", "I click Don’t Save.", "I close it without saving.",
+    "Ich klicke auf Absenden.", "Ich leere den Papierkorb.", "Je clique sur Ne pas enregistrer.",
+    "Haz clic en Restablecer este equipo.", "Clico em Não salvar.", "Ich setze den PC zurück: Zurücksetzen.",
+])
+def test_more_risky_phrasings(thought):
+    assert risky_intent(thought)
+
+
+@pytest.mark.parametrize("thought", [
+    "I'm formatting the paragraph as a list.", "Premo Invio per cercare.", "J'ouvre l'invite de commande.",
+    "Ich sortiere die Zahlen in der Tabelle.", "Formatto il testo in grassetto.", "I open the Display page.",
+])
+def test_more_ordinary_steps_stay_quiet(thought):
+    assert risky_intent(thought) is None
+
+
+def test_an_approval_covers_only_what_was_approved():
+    brain, backend, hooks, *_ = make([
+        "Thought: Moving files to the Recycle Bin, so I ask first.\nAction: ask_user(content='Delete these three files?')",
+        "Thought: You approved, so I click Delete.\nAction: click(start_box='<|box_start|>(686,378)<|box_end|>')",
+        "Thought: Now I empty the Recycle Bin to free space.\nAction: click(start_box='<|box_start|>(700,400)<|box_end|>')",
+        "Action: finished(content='Done.')",
+    ])
+    assert brain.run("delete these files").ok
+    assert hooks.asked == ["Delete these three files?",
+                           "Now I empty the Recycle Bin to free space."]   # a different, worse step: asked again
+
+
+def test_a_typed_step_is_asked_about_once_with_the_exact_text():
+    brain, backend, hooks, *_ = make([
+        "Thought: I delete the old logs.\nAction: type(content='rm -rf ./old-logs\\n')",
+        "Action: finished(content='Done.')",
+    ])
+    assert brain.run("clean up").ok
+    assert len(hooks.asked) == 1                                 # not again by the controller's own check
+    assert "rm -rf ./old-logs" in hooks.asked[0] and "press Enter" in hooks.asked[0]
+    assert ("write", "rm -rf ./old-logs") in backend.log
+    assert brain.controller.preapproved is False                 # only for that one action
+
+
+def test_controller_still_asks_for_steps_nobody_approved():
+    brain, backend, hooks, *_ = make([
+        "Thought: I type the cleanup command.\nAction: type(content='rm -rf /tmp/x')",   # thought has no risky word
+        "Action: finished(content='Done.')",
+    ], allow=False)
+    brain.run("tidy")
+    assert hooks.asked and hooks.asked[0].startswith("Type")     # the controller's typed-text check caught it
+    assert not [e for e in backend.log if e[0] == "write"]
