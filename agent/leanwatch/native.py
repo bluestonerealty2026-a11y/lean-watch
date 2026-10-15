@@ -17,9 +17,11 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from typing import Callable
 
-DEFAULT_HOTKEY = "ctrl+alt+space"
+# Ctrl+Option+Space switches the input language on a Mac, so macOS gets its own default.
+DEFAULT_HOTKEY = "ctrl+shift+space" if sys.platform == "darwin" else "ctrl+alt+space"
 
 
 def parse_hotkey(text: str) -> tuple[set[str], str]:
@@ -98,6 +100,10 @@ class Native:
     def register_hotkey(self, combo: str, callback: Callable[[], None]):
         """Returns a function that unregisters it, or None if shortcuts aren't available here."""
         return _pynput_hotkey(combo, callback)
+
+    def missing_permissions(self) -> list[tuple[str, str]]:
+        """Operating-system permissions LeanWatch still needs: (what, settings link)."""
+        return []
 
     def notes(self) -> list[str]:
         return []
@@ -301,10 +307,23 @@ class WindowsNative(Native):
 # macOS (needs pyobjc-framework-Cocoa for the native parts)
 # ---------------------------------------------------------------------------
 class MacNative(Native):
+    """macOS, through pyobjc. Details from Qt's cocoa plugin source and Apple's AppKit documentation:
+
+    - Qt.Tool windows are NSPanels; with level 25 (NSStatusWindowLevel), an accessory app (no Dock icon)
+      and the collection behaviours below they float over full-screen apps and on every Space.
+    - QWidget.raise_() would activate the whole app (stealing the keyboard) unless QT_MAC_SET_RAISE_PROCESS=0,
+      which desktop.py sets; to stay in front we use orderFrontRegardless, which never activates.
+    - Screenshots: NSWindowSharingNone is a legacy setting (at best a black box), so the bubble steps aside.
+    """
+
     name = "macos"
-    # NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary | IgnoresCycle | FullScreenAuxiliary
+    # CanJoinAllSpaces | Stationary | IgnoresCycle | FullScreenAuxiliary. Assigned, never OR-ed:
+    # Qt's default includes MoveToActiveSpace, which conflicts with CanJoinAllSpaces.
     BEHAVIOR = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
-    STATUS_LEVEL = 25          # NSStatusWindowLevel: above normal and floating windows
+    JOIN_ALL_APPS = 1 << 18      # CanJoinAllApplications (macOS 13+): a floating overlay, outside Stage Manager
+    STATUS_LEVEL = 25            # above the Dock (20) and the menu bar (24), below pop-up menus (101)
+    KEYS_CTRL, KEYS_SHIFT, KEYS_ALT, KEYS_CMD = 0x1000, 0x200, 0x800, 0x100   # Carbon modifier masks
+    SETTINGS = "x-apple.systempreferences:com.apple.preference.security?"
 
     def __init__(self):
         try:
@@ -315,6 +334,7 @@ class MacNative(Native):
             self.objc = objc
         except Exception:
             self.appkit = None
+        self._observer = None
 
     def _nswindow(self, widget):
         view = self.objc.objc_object(c_void_p=int(widget.winId()))
@@ -331,62 +351,120 @@ class MacNative(Native):
         win = self._nswindow(widget)
         if win is None:
             return
-        win.setCollectionBehavior_(self.BEHAVIOR)
+        try:
+            win.setCollectionBehavior_(self.BEHAVIOR | self.JOIN_ALL_APPS)
+        except Exception:
+            win.setCollectionBehavior_(self.BEHAVIOR)
         win.setLevel_(self.STATUS_LEVEL)
         win.setHidesOnDeactivate_(False)
+        win.setCanHide_(False)          # survive Cmd-H and "Hide Others"
+        if widget.isVisible():
+            win.orderFrontRegardless()
 
     def after_show(self, widget) -> None:
-        self.prepare_window(widget)   # Qt may reset the level when it shows a window again
+        self.prepare_window(widget)     # Qt resets the level whenever it (re)creates or reshows the window
 
-    def exclude_from_capture(self, widget) -> bool:
-        # NSWindowSharingNone keeps the window out of other apps' captures on older macOS, but newer
-        # versions ignore it for some capture paths, so LeanWatch still hides the window to be sure.
+    def keep_on_top(self, widget) -> None:
         if self.appkit:
             try:
-                self._nswindow(widget).setSharingType_(0)
+                self._nswindow(widget).orderFrontRegardless()   # front of its level, without activating LeanWatch
             except Exception:
                 pass
-        return False
+
+    def exclude_from_capture(self, widget) -> bool:
+        return False                    # see the class notes: the bubble steps aside for each screenshot
 
     def activate_own(self, widget) -> None:
         if self.appkit:
             app = self.appkit.NSApplication.sharedApplication()
-            try:
+            if app.respondsToSelector_("activate"):
                 app.activate()                          # macOS 14+
-            except AttributeError:
+            else:
                 app.activateIgnoringOtherApps_(True)
         widget.raise_()
 
     def focus_tracker(self) -> FocusTracker:
         if not self.appkit:
             return super().focus_tracker()
-        ws = self.appkit.NSWorkspace.sharedWorkspace()
+        A = self.appkit
+        ws = A.NSWorkspace.sharedWorkspace()
         me = os.getpid()
 
         def activate(app):
-            if not app.isTerminated():
-                app.activateWithOptions_(1 << 1)        # NSApplicationActivateIgnoringOtherApps (ignored on 14+, harmless)
+            if app.isTerminated():
+                return
+            NSApp = A.NSApplication.sharedApplication()
+            if NSApp.respondsToSelector_("yieldActivationToApplication:"):        # macOS 14+: cooperative activation
+                NSApp.yieldActivationToApplication_(app)
+                if not app.activateFromApplication_options_(A.NSRunningApplication.currentApplication(), 0):
+                    app.activateWithOptions_(0)
+            else:
+                app.activateWithOptions_(1 << 1)                                  # macOS 13: IgnoringOtherApps
+            # Activation is asynchronous: wait (briefly) until it is really in front, so typing goes there.
+            from PySide6.QtCore import QCoreApplication, QEventLoop
 
-        return FocusTracker(ws.frontmostApplication, lambda a: a.processIdentifier() == me, activate)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                front = ws.frontmostApplication()
+                if front is not None and front.processIdentifier() == app.processIdentifier():
+                    return
+                QCoreApplication.processEvents(QEventLoop.AllEvents, 20)
+                time.sleep(0.02)
+
+        tracker = FocusTracker(ws.frontmostApplication, lambda a: a.processIdentifier() == me, activate)
+        # Also follow app switches as they happen, not only on the poll.
+        def on_switch(note):
+            app = note.userInfo()[A.NSWorkspaceApplicationKey]
+            if app is not None and app.processIdentifier() != me:
+                tracker.last = app
+
+        try:
+            self._observer = ws.notificationCenter().addObserverForName_object_queue_usingBlock_(
+                A.NSWorkspaceDidActivateApplicationNotification, None, A.NSOperationQueue.mainQueue(), on_switch)
+        except Exception:
+            pass
+        return tracker
 
     def register_hotkey(self, combo: str, callback):
+        """A Carbon hot key (via quickmachotkey): no permission needed, and the key press is not passed on."""
+        mods, key = parse_hotkey(combo)
+        try:
+            from quickmachotkey import constants as K
+            from quickmachotkey import quickHotKey
+        except Exception:
+            return self._monitor_hotkey(mods, key, callback)
+        vkey = (K.kVK_Space if key == "space" else getattr(K, f"kVK_ANSI_{key.upper()}", None)
+                or getattr(K, f"kVK_{key.upper()}", None))
+        if vkey is None:
+            return None
+        mask = 0
+        for m, bit in (("ctrl", self.KEYS_CTRL), ("shift", self.KEYS_SHIFT), ("alt", self.KEYS_ALT), ("cmd", self.KEYS_CMD)):
+            if m in mods:
+                mask |= bit
+
+        @quickHotKey(virtualKey=vkey, modifierMask=mask)
+        def leanwatch_hotkey() -> None:
+            callback()
+
+        return leanwatch_hotkey.unregister
+
+    def _monitor_hotkey(self, mods, key, callback):
+        """Fallback without quickmachotkey: an NSEvent monitor (needs Accessibility; the app sees the keys too)."""
         if not self.appkit:
             return None
-        mods, key = parse_hotkey(combo)
         A = self.appkit
         want = 0
         for m, bit in (("shift", 1 << 17), ("ctrl", 1 << 18), ("alt", 1 << 19), ("cmd", 1 << 20)):
             if m in mods:
                 want |= bit
         mask_all = (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20)
-        char = " " if key == "space" else key
 
         def matches(event) -> bool:
             if (event.modifierFlags() & mask_all) != want:
                 return False
             if key == "space":
                 return event.keyCode() == 49
-            return (event.charactersIgnoringModifiers() or "").lower() == char
+            return (event.charactersIgnoringModifiers() or "").lower() == key
 
         def on_global(event):
             if matches(event):
@@ -395,11 +473,11 @@ class MacNative(Native):
         def on_local(event):
             if matches(event):
                 callback()
-                return None        # swallow it inside LeanWatch
+                return None
             return event
 
-        key_down = 1 << 10          # NSEventMaskKeyDown
-        g = A.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(key_down, on_global)   # needs Accessibility
+        key_down = 1 << 10
+        g = A.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(key_down, on_global)
         local = A.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(key_down, on_local)
 
         def stop():
@@ -409,19 +487,36 @@ class MacNative(Native):
 
         return stop
 
-    def keep_on_top(self, widget) -> None:
-        widget.raise_()
-        if self.appkit:
-            try:
-                self._nswindow(widget).orderFrontRegardless()
-            except Exception:
-                pass
+    def missing_permissions(self) -> list[tuple[str, str]]:
+        """(what, System Settings link) for each permission macOS hasn't granted yet."""
+        import ctypes
+
+        missing = []
+        try:
+            ax = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+            ax.AXIsProcessTrusted.restype = ctypes.c_bool
+            if not ax.AXIsProcessTrusted():
+                missing.append(("Accessibility (to move the mouse and type)", self.SETTINGS + "Privacy_Accessibility"))
+        except OSError:
+            pass
+        try:
+            cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+            cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+            if not cg.CGPreflightScreenCaptureAccess():
+                missing.append(("Screen Recording (to see the screen)", self.SETTINGS + "Privacy_ScreenCapture"))
+        except (OSError, AttributeError):
+            pass
+        return missing
 
     def notes(self) -> list[str]:
+        out = []
         if not self.appkit:
-            return ["Install pyobjc-framework-Cocoa so the bubble floats over full-screen apps and every Space: "
-                    "pip install pyobjc-framework-Cocoa"]
-        return []
+            out.append("Install pyobjc-framework-Cocoa so the bubble floats over full-screen apps and every Space: "
+                       "pip install pyobjc-framework-Cocoa")
+        for what, _url in self.missing_permissions():
+            out.append(f"macOS hasn't allowed {what} yet: System Settings > Privacy & Security. "
+                       "Allow the app you started LeanWatch from (Terminal, or Python at login), then restart LeanWatch.")
+        return out
 
 
 # ---------------------------------------------------------------------------

@@ -162,7 +162,8 @@ class BubbleButton(QWidget):
     menu_requested = Signal(QPoint)
 
     def __init__(self, translucent: bool = True):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
+                         | Qt.NoDropShadowWindowHint)   # it paints its own shadow
         self.setObjectName("leanwatch-bubble")
         self.setWindowTitle("LeanWatch")
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -326,7 +327,7 @@ class Panel(QWidget):
     collapse_clicked = Signal()
 
     def __init__(self, translucent: bool = True):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint)
         self.setObjectName("leanwatch-panel")
         self.setWindowTitle("LeanWatch")
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -387,6 +388,7 @@ class Panel(QWidget):
         self.activity.setTextFormat(Qt.PlainText)
         self.activity.hide()
         self.consent = AskCard("Allow for this session", "Not now")
+        self.permits = AskCard("Open Settings", "Later")       # operating-system permissions still missing
         self.confirm = AskCard("Allow", "Don't allow")
         self.paused = AskCard("Resume", "Stop", yes_style="primary")
         self.paused.no.setObjectName("danger")
@@ -414,7 +416,7 @@ class Panel(QWidget):
         row.addWidget(self.input, 1)
         row.addWidget(self.go)
 
-        self.feed = [self.notice, self.steps, self.activity, self.consent, self.confirm, self.paused]
+        self.feed = [self.notice, self.permits, self.steps, self.activity, self.consent, self.confirm, self.paused]
         self.input_at_bottom = True
         self._layout_rows()
         self.running = False
@@ -664,6 +666,9 @@ class BubbleApp(QObject):
         self.panel.confirm.no.clicked.connect(lambda: self._answer(False))
         self.panel.paused.yes.clicked.connect(self.resume)
         self.panel.paused.no.clicked.connect(self.stop)
+        self.panel.permits.yes.clicked.connect(self._open_permission_settings)
+        self.panel.permits.no.clicked.connect(lambda: (self.panel.permits.hide(), self.panel.refit()))
+        self.missing: list[tuple[str, str]] = []
         self.session_event.connect(self._on_event)        # queued: events arrive from the worker thread
         self.hotkey_pressed.connect(self.open_from_hotkey)
         self.session.listeners.append(self.session_event.emit)
@@ -799,6 +804,7 @@ class BubbleApp(QObject):
 
     def expand(self, focus: bool = True) -> None:
         self.focus.poll()                     # the app the person was using, to give it back the keyboard
+        self._check_permissions()
         self.panel.place(self.bubble.frameGeometry(), self._area())
         self.bubble.hide()
         self.panel.show()
@@ -821,6 +827,26 @@ class BubbleApp(QObject):
         if not self.hidden_by_user:
             self.bubble.show()
         self.shield.refresh()
+
+    def _check_permissions(self) -> None:
+        try:
+            self.missing = self.native.missing_permissions()
+        except Exception:
+            self.missing = []
+        if self.missing and not self.running:
+            what = " and ".join(m[0] for m in self.missing)
+            self.panel.permits.ask("Your computer needs to allow LeanWatch first",
+                                   f"Turn on {what} for LeanWatch in System Settings > Privacy & Security, then restart it.",
+                                   warn=True)
+        else:
+            self.panel.permits.hide()
+
+    def _open_permission_settings(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        if self.missing:
+            QDesktopServices.openUrl(QUrl(self.missing[0][1]))
 
     def open_from_hotkey(self) -> None:
         if self.hidden_by_user:
@@ -867,6 +893,9 @@ class BubbleApp(QObject):
         self.panel.refit()
 
     def _start(self, text: str) -> None:
+        # Give the keyboard back to the app the person was using first: LeanWatch will type into it,
+        # and some systems only allow it now, while the click on Go is fresh.
+        self.focus.restore()
         reply = self.session.handle({"type": "command", "text": text})
         if reply and reply.get("type") == "error":
             self.panel.set_notice(reply.get("message", "Something went wrong."), "stopped")
@@ -874,8 +903,6 @@ class BubbleApp(QObject):
             return
         self.panel.input.clear()
         self.panel.input.setPlaceholderText(text[:80])
-        # Give the keyboard back to the app the person was using: LeanWatch will type into it.
-        self.focus.restore()
 
     def stop(self) -> None:
         self.session.handle({"type": "stop"})

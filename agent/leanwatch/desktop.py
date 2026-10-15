@@ -72,6 +72,11 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
     from .native import enable_dpi_awareness
 
     enable_dpi_awareness()        # Windows: before Qt, pyautogui or mss choose a DPI mode
+    if sys.platform == "darwin":
+        # Before Qt starts: QWidget.raise_() must not activate the app (it would take the keyboard from the
+        # app LeanWatch is working in), and Qt must not turn LeanWatch into a Dock app at launch.
+        os.environ.setdefault("QT_MAC_SET_RAISE_PROCESS", "0")
+        os.environ.setdefault("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1")
     if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
         # Qt can't place always-on-top windows on Wayland, and pyautogui needs X anyway: use XWayland.
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
@@ -108,7 +113,7 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
     if server.error is not None:
         print(f"LeanWatch could not start on 127.0.0.1:{cfg.port} ({server.error}).")
         print("It is probably running already: look for the teal bubble. Or pick another port with --port.")
-        return 1
+        return 0      # not an error: a start-at-login service must not keep retrying
     session_path = write_session_file(cfg, token)
     url = f"http://127.0.0.1:{cfg.port}/?token={token}"
 

@@ -463,3 +463,13 @@ def test_clicking_the_box_during_a_task_gives_the_keyboard_back(qapp):
     pump(qapp, 0.3)
     assert native.restored > before          # (the offscreen platform may deliver its own activation too)
     close(app)
+
+
+def test_missing_os_permissions_are_explained_in_the_box(qapp):
+    app, _, native = make(qapp)
+    native.missing_permissions = lambda: [("Screen Recording (to see the screen)", "x-apple.systempreferences:...")]
+    app.expand()
+    assert app.panel.permits.isVisible() and "Screen Recording" in app.panel.permits.detail.text()
+    QTest.mouseClick(app.panel.permits.no, Qt.LeftButton)
+    assert not app.panel.permits.isVisible()
+    close(app)

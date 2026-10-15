@@ -1,6 +1,7 @@
 # LeanWatch desktop helper. Everything runs on your computer; no API key needed.
 PySide6-Essentials>=6.8   # the floating bubble and its command box (Qt)
 pyobjc-framework-Cocoa>=10; sys_platform == "darwin"   # macOS: float over full-screen apps and every Space
+quickmachotkey>=2025.7; sys_platform == "darwin"        # macOS: the keyboard shortcut, without extra permissions
 python-xlib>=0.33; sys_platform == "linux"             # Linux/X11: keep the bubble on every desktop, hand back focus
 aiohttp>=3.9          # local server for the optional web control center
 mss>=9.0              # fast screenshots

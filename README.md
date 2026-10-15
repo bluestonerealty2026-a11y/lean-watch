@@ -29,7 +29,7 @@ python -m leanwatch                     # the teal bubble appears in the bottom-
 python -m leanwatch --autostart on      # optional: start it every time you log in
 ```
 
-1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere.
+1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac).
 2. Type what you need and press <kbd>Enter</kbd> or **Go**.
 3. The first time, LeanWatch asks to use your mouse and keyboard. Click **Allow for this session**.
 4. Watch. Each step appears in the box. LeanWatch asks before anything that is hard to undo.

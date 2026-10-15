@@ -105,12 +105,18 @@ class Autostart:
             entry.write_bytes(plistlib.dumps({
                 "Label": LABEL,
                 "ProgramArguments": [python, str(self.launcher)],
+                "WorkingDirectory": str(self.launcher.parent),
                 "RunAtLoad": True,
+                "KeepAlive": {"SuccessfulExit": False},      # restart after a crash, not after Quit
                 "ProcessType": "Interactive",
+                "LimitLoadToSessionType": "Aqua",            # only in the graphical login session
                 "StandardOutPath": log,
                 "StandardErrorPath": log,
             }))
-            return f"LeanWatch will start when you log in to your Mac ({entry})."
+            entry.chmod(0o644)
+            return (f"LeanWatch will start when you log in to your Mac ({entry}). macOS asks for permissions again for "
+                    "the Python it starts at login: allow 'Python' under System Settings > Privacy & Security > "
+                    "Accessibility and Screen Recording.")
         entry.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
