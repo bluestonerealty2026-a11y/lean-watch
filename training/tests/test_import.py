@@ -119,6 +119,8 @@ def test_groundcua(tmp_path):
     meta = run("groundcua", tmp_path / "out", path=str(raw))
     g = lines(tmp_path / "out" / "grounding.jsonl")
     assert meta["grounding"] == 1 and g[0]["bbox"] == [10, 10, 50, 30] and g[0]["role"] == "button"
+    # The full sentence is the instruction; the element's text is the label.
+    assert g[0]["instruction"] == "Click Render" and g[0]["label"] == "Render"
 
 
 def test_screenspot_v2_and_pro(tmp_path):
@@ -132,6 +134,16 @@ def test_screenspot_v2_and_pro(tmp_path):
     g = {r["label"]: r for r in lines(tmp_path / "out" / "grounding.jsonl")}
     assert g["OK"]["bbox"] == [10, 20, 40, 60]          # [x, y, w, h] -> corners
     assert g["Layers"]["bbox"] == [100, 50, 140, 70]    # already corners
+    assert g["OK"]["instruction"] == "OK"
+
+
+def test_screenspot_images_folder_option(tmp_path):
+    raw = tmp_path / "raw"
+    img(raw / "screenspotv2_image" / "a.png")
+    (raw / "ann.json").parent.mkdir(parents=True, exist_ok=True)
+    (raw / "ann.json").write_text(json.dumps([{"img_filename": "a.png", "bbox": [1, 2, 3, 4], "instruction": "Close"}]))
+    meta = run("screenspot", tmp_path / "out", path=str(raw / "ann.json"), images=str(raw / "screenspotv2_image"))
+    assert meta["grounding"] == 1
 
 
 def test_aguvis_from_hub(tmp_path, monkeypatch):

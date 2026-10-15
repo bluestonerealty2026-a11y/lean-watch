@@ -19,9 +19,12 @@ from pathlib import Path
 import leanwatch_paths  # noqa: F401
 from leanwatch.actions import ParseError, parse_response
 
-ACTION_NAME = {"click": {"click", "left_single", "left_double"}, "drag": {"drag"}, "type": {"type"},
-               "hotkey": {"hotkey", "press"}, "confirm": {"ask_user", "call_user"}, "finished": {"finished"},
-               "scroll": {"scroll"}}
+# Names that mean the same action.
+SAME = {"left_single": "click", "press": "hotkey", "keydown": "hotkey", "call_user": "ask_user", "move_to": "mouse_move"}
+
+
+def canonical(name: str) -> str:
+    return SAME.get(name, name)
 
 
 def score(example: dict, answer_text: str, model_w: int, model_h: int, coords: str) -> dict:
@@ -33,8 +36,10 @@ def score(example: dict, answer_text: str, model_w: int, model_h: int, coords: s
         return out
     out["parsed"] = True
     a = parsed.actions[0]
-    want = "click" if example["task"] == "grounding" else meta["action"]
-    out["type_ok"] = a.name in ACTION_NAME.get(want, {want})
+    # Compare with the exact answer the model was trained on, so a right click (right_single) or a
+    # double click (left_double) only counts when the model chose that same kind of click.
+    target = parse_response(example["completion"][0]["content"][0]["text"]).actions[0].name
+    out["type_ok"] = canonical(a.name) == canonical(target)
     if "bbox" in meta and a.point is not None:
         sx, sy = (meta["width"] / 1000, meta["height"] / 1000) if coords == "rel1000" else (meta["width"] / model_w, meta["height"] / model_h)
         x, y = a.point[0] * sx, a.point[1] * sy

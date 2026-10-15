@@ -365,10 +365,12 @@ class Controller:
             self._sleep(float(inp.get("duration", 1)))
             return "OK"
 
+        # If the person moved the mouse since our last step (say, to click into another app while the
+        # model was thinking), stop before typing: the keys would go to whatever they clicked.
+        self._check_takeover()
         if name in ("type", "key", "hold_key"):
             return self._keyboard(name, inp)
 
-        self._check_takeover()
         button = {"right_click": "right", "middle_click": "middle"}.get(name, "left")
         if name in ("left_click", "right_click", "middle_click", "double_click", "triple_click"):
             if inp.get("coordinate") is not None:

@@ -236,8 +236,8 @@ def format_action(action: dict, space: CoordSpace, style: str = "box") -> str:
     if kind == "drag":
         x1, y1 = space.to_model(action["x1"], action["y1"])
         x2, y2 = space.to_model(action["x2"], action["y2"])
-        end = "end_point" if style == "point" else "end_box"
-        return f"drag({key}='{_box(x1, y1, style)}', {end}='{_box(x2, y2, style)}')"
+        start, end = ("start_point", "end_point") if style == "point" else ("start_box", "end_box")
+        return f"drag({start}='{_box(x1, y1, style)}', {end}='{_box(x2, y2, style)}')"
     if kind == "type":
         return f"type(content='{_quote(action['text'])}')"
     if kind == "hotkey":
@@ -260,7 +260,13 @@ def format_response(thought: str, action: str) -> str:
 
 def hotkey_to_combo(keys: str) -> str:
     """UI-TARS 'ctrl c' -> controller 'ctrl+c'. Also accepts 'ctrl+c'."""
-    parts = [p for p in re.split(r"[\s+]+", keys.strip().lower()) if p]
+    s = keys.strip().lower()
+    if re.search(r"\s", s):                 # UI-TARS style: 'ctrl c', 'ctrl +'
+        parts = s.split()
+    elif s.endswith("++") or s == "+":       # 'ctrl++' is Ctrl and the plus key
+        parts = [p for p in s[:-2].split("+") if p] + ["+"] if s != "+" else ["+"]
+    else:
+        parts = [p for p in s.split("+") if p]
     names = {"arrowleft": "Left", "arrowright": "Right", "arrowup": "Up", "arrowdown": "Down",
              "enter": "Return", "esc": "Escape", "escape": "Escape", "space": "space", "backspace": "BackSpace",
              "pagedown": "Page_Down", "pageup": "Page_Up", "delete": "Delete", "tab": "Tab", "home": "Home", "end": "End"}

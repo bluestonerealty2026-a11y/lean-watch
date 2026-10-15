@@ -21,7 +21,7 @@ class ScriptedModel:
         self.size = size
         self.calls = []
 
-    def answer(self, messages, images):
+    def answer(self, messages, images, stop=None):
         self.calls.append((messages, images))
         return ModelAnswer(self.answers.pop(0), *self.size)
 
@@ -186,3 +186,101 @@ def test_claude_brain_without_its_package_says_how_to_install(monkeypatch):
     cfg.brain = "claude"
     with pytest.raises(RuntimeError, match="requirements-claude.txt"):
         make_brain(cfg, None, None, threading.Event())
+
+
+# --------------------------------------------------------------------------- review fixes
+@pytest.mark.parametrize("thought", [
+    "I click Empty Trash to free up space.", "I click Empty Recycle Bin.", "I click Replace to overwrite the existing file.",
+    "I turn off the firewall.", "I click Place order.", "I press Delete.",
+    "Hago clic en Vaciar papelera para borrar todo.", "Je clique sur Supprimer.", "Ich klicke auf Löschen.",
+    "Clico em Excluir.", "Clicco su Elimina.", "J'envoie le message.",
+])
+def test_risky_words_in_several_languages(thought):
+    assert risky_intent(thought)
+
+
+@pytest.mark.parametrize("thought", [
+    "I compress the image to make it smaller.", "I open the Public folder.", "I invite you to look at the menu.",
+    "I click the Display page.", "I format the text as bold.", "I open the Command Prompt.",
+])
+def test_ordinary_steps_are_not_flagged(thought):
+    assert risky_intent(thought) is None
+
+
+def test_keydown_is_checked_too():
+    brain, backend, hooks, *_ = make(["Thought: I press Enter to send the email.\nAction: keydown(key='enter')"], allow=False)
+    assert not brain.run("send it").ok
+    assert hooks.asked and not [e for e in backend.log if e[0] == "key_down"]
+
+
+def test_unknown_language_asks_before_every_acting_step():
+    brain, backend, hooks, *_ = make([
+        "Thought: Ninjiye muri Settings.\nAction: click(start_box='<|box_start|>(686,378)<|box_end|>')",
+        "Thought: Ndategereza.\nAction: wait()",
+        "Action: finished(content='Byarangiye.')",
+    ], language="Kinyarwanda")
+    assert brain.run("fungura settings").ok
+    assert hooks.asked == ["Ninjiye muri Settings."]      # the click was asked about; wait and finished were not
+
+
+def test_approval_covers_the_steps_that_carry_it_out():
+    brain, backend, hooks, *_ = make([
+        "Thought: Deleting can't be undone, so I ask first.\nAction: ask_user(content='Delete the folder Old Photos?')",
+        "Thought: You approved, so I click Delete.\nAction: click(start_box='<|box_start|>(686,378)<|box_end|>')",
+        "Thought: Files asks me to confirm. I click Delete.\nAction: click(start_box='<|box_start|>(700,400)<|box_end|>')",
+        "Thought: Now I delete the Music folder too.\nAction: click(start_box='<|box_start|>(10,10)<|box_end|>')",
+        "Action: finished(content='Done.')",
+    ])
+    assert brain.run("delete old photos").ok
+    # One question for the approved deletion; the later, unrelated delete is asked about again.
+    assert hooks.asked == ["Delete the folder Old Photos?", "Now I delete the Music folder too."]
+
+
+def test_stop_while_paused_does_not_start_another_step():
+    brain, backend, hooks, model, g, stop = make(["Action: finished(content='x')"])
+
+    def paused_then_stopped():
+        stop.set()
+
+    hooks.wait_if_paused = paused_then_stopped
+    assert not brain.run("x").ok
+    assert model.calls == []
+
+
+def test_answers_keep_box_tokens_for_the_history():
+    from leanwatch.local_brain import clean_reply
+
+    raw = "Thought: ok\nAction: click(start_box='<|box_start|>(12,34)<|box_end|>')<|im_end|><|endoftext|><|endoftext|>"
+    assert clean_reply(raw) == "Thought: ok\nAction: click(start_box='<|box_start|>(12,34)<|box_end|>')"
+    assert clean_reply("Action: wait()</s>junk", ("</s>",)) == "Action: wait()"
+
+
+def test_plus_key_survives():
+    from leanwatch.actions import hotkey_to_combo
+    from leanwatch.controller import parse_combo
+
+    assert parse_combo(hotkey_to_combo("ctrl +"), "linux") == ["ctrl", "+"]
+    assert parse_combo(hotkey_to_combo("ctrl++"), "linux") == ["ctrl", "+"]
+    assert parse_combo(hotkey_to_combo("ctrl shift +"), "linux") == ["ctrl", "shift", "+"]
+    assert parse_combo(hotkey_to_combo("+"), "linux") == ["+"]
+    assert hotkey_to_combo("ctrl c") == "ctrl+c" and hotkey_to_combo("ctrl+c") == "ctrl+c"
+
+
+def test_typing_waits_if_the_person_moved_the_mouse_since_the_last_step():
+    from leanwatch.controller import UserTookOver
+
+    brain, backend, *_ = make([])
+    c = brain.controller
+    c.execute("left_click", {"coordinate": [100, 100]})
+    backend._pos = (900, 700)                     # the person clicked into another app meanwhile
+    with pytest.raises(UserTookOver):
+        c.execute("type", {"text": "see you\n"})
+    assert not [e for e in backend.log if e[0] == "write"]
+
+
+def test_point_style_drag_uses_start_point():
+    from leanwatch.actions import CoordSpace, format_action
+
+    space = CoordSpace("abs", 1000, 625)
+    text = format_action({"type": "drag", "x1": 10, "y1": 10, "x2": 100, "y2": 10}, space, "point")
+    assert text.startswith("drag(start_point='<point>") and "end_point='<point>" in text

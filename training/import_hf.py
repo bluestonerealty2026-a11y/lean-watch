@@ -395,7 +395,8 @@ def import_groundcua(a, wr: Writer):
             if not in_range(box, w, h):
                 wr.skip("box outside image")
                 continue
-            wr.grounding({"image": rel, "label": (row.get("instruction") or row.get("text") or "").strip(),
+            instruction = (row.get("instruction") or "").strip()
+            wr.grounding({"image": rel, "label": (row.get("text") or instruction).strip(), "instruction": instruction or None,
                           "role": (row.get("category") or "").lower(), "bbox": box, "width": w, "height": h,
                           "platform": row.get("platform", "")})
 
@@ -414,7 +415,8 @@ def import_screenspot(a, wr: Writer):
             name = row.get("img_filename") or row.get("image")
             if not name:
                 continue
-            candidates = [f.parent / name, f.parent.parent / "images" / name, root / "images" / name, root / name]
+            candidates = ([Path(a.images) / name] if a.images else []) + [
+                f.parent / name, f.parent.parent / "images" / name, root / "images" / name, root / name]
             src = next((c for c in candidates if c.exists()), None)
             if src is None:
                 wr.skip("image file not found")
@@ -430,7 +432,9 @@ def import_screenspot(a, wr: Writer):
             if not in_range(box, w, h):
                 wr.skip("box outside image")
                 continue
-            wr.grounding({"image": rel, "label": row.get("instruction", "").strip(), "role": row.get("data_type") or row.get("ui_type", ""),
+            instruction = row.get("instruction", "").strip()
+            wr.grounding({"image": rel, "label": instruction, "instruction": instruction or None,
+                          "role": row.get("data_type") or row.get("ui_type", ""),
                           "bbox": box, "width": w, "height": h, "platform": row.get("platform") or row.get("application", "")})
 
 

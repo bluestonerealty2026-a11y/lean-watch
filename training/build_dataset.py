@@ -85,7 +85,11 @@ def build(practice_dirs: list[Path], out: Path, coords: str, max_pixels: int, mi
                 prompt_text = computer_prompt(ep["instruction"], language, style)
                 past: list[dict] = []
                 for k, step in enumerate(ep["steps"]):
-                    target = format_response(step.get("thought", ""), format_action(step["action"], space, style))
+                    thought = step.get("thought", "")
+                    if step["action"].get("type") == "click" and step["action"].get("clicks", 1) == 3:
+                        # The action space has no triple click (format_action writes a double click), so say so.
+                        thought = re.sub(r"triple[- ]click", "double-click", thought, flags=re.IGNORECASE)
+                    target = format_response(thought, format_action(step["action"], space, style))
                     messages, image_turns = build_messages(prompt_text, past, history_images)
                     images = [str(root / ep["steps"][t]["image"]) for t in image_turns]
                     meta = {"source": tag, "episode": ep["id"], "step": k, "action": step["action"]["type"],
@@ -147,6 +151,10 @@ def main(argv=None):
     a = p.parse_args(argv)
     if a.max_pixels > MAX_PIXELS:
         p.error(f"--max-pixels must be at most {MAX_PIXELS}")
+    if a.language.strip().lower() != "english":
+        print(f"Note: --language {a.language} only changes the prompt line. The explanations in your recordings stay in "
+              "the language they were written in (the practice computer records English), so the model learns to answer "
+              "in that language. Translate the thoughts first if you want explanations in another language.")
     meta = build(a.practice, a.out, a.coords, a.max_pixels, a.min_pixels, a.history_images, a.val_fraction,
                  set(a.tasks.split(",")), a.style, a.language, a.seed)
     c = meta["counts"]

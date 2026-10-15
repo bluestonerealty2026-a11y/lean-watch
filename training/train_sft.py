@@ -30,34 +30,36 @@ import leanwatch_paths  # noqa: F401
 LANGUAGE_LORA_TARGETS = r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
 
 
-def load_split(path: Path, data_dir: Path):
-    from datasets import Image as HFImage, Sequence, load_dataset
+def load_split(path: Path, data_dir: Path, tasks: set[str] | None = None):
+    """Read build_dataset.py's JSONL. Only images/prompt/completion go to the trainer: `meta` differs
+    between sources (bbox or point, extra fields), which would trip Arrow's schema inference."""
+    from datasets import Dataset, Image as HFImage, Sequence
 
-    ds = load_dataset("json", data_files=str(path), split="train")
-
-    def absolute(example):
-        example["images"] = [p if Path(p).is_absolute() else str((data_dir / p).resolve()) for p in example["images"]]
-        return example
-
-    ds = ds.map(absolute)
+    rows = []
+    with open(path) as f:
+        for line in f:
+            r = json.loads(line)
+            if tasks and r["task"] not in tasks:
+                continue
+            images = [p if Path(p).is_absolute() else str((data_dir / p).resolve()) for p in r["images"]]
+            rows.append({"images": images, "prompt": r["prompt"], "completion": r["completion"]})
+    ds = Dataset.from_list(rows)
     # Decode image paths into PIL images when a batch is built (TRL's vision collator expects images).
-    ds = ds.cast_column("images", Sequence(HFImage()))
-    keep = {"images", "prompt", "completion"}
-    return ds.remove_columns([c for c in ds.column_names if c not in keep])
+    return ds.cast_column("images", Sequence(HFImage()))
 
 
 def portable_trainer_class():
     """SFTTrainer whose loss also works without an NVIDIA GPU.
 
-    TRL computes the loss with a fused Triton kernel, which needs CUDA. On a Mac (MPS) or a
-    CPU we fall back to the model's own cross-entropy loss, which gives the same value.
+    TRL computes the loss with a fused Triton kernel, which needs CUDA tensors. When the batch
+    is on a Mac (MPS) or the CPU (also --device cpu on an NVIDIA machine) we fall back to the
+    model's own cross-entropy loss, which gives the same value.
     """
-    import torch
     from trl import SFTTrainer
 
     class PortableSFTTrainer(SFTTrainer):
         def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-            if torch.cuda.is_available():
+            if inputs["input_ids"].device.type == "cuda":
                 return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
             outputs = model(**inputs, num_items_in_batch=num_items_in_batch)
             return (outputs.loss, outputs) if return_outputs else outputs.loss
@@ -65,12 +67,19 @@ def portable_trainer_class():
     return PortableSFTTrainer
 
 
+def native_bf16() -> bool:
+    """bf16 with real hardware support (Ampere or newer). Older GPUs like the T4 only emulate it, slowly."""
+    import torch
+
+    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+
+
 def pick_precision(device: str):
     import torch
 
     if device == "cpu" or not torch.cuda.is_available():
         return torch.float32, {"use_cpu": device == "cpu" or not torch.cuda.is_available(), "bf16": False, "fp16": False}
-    if torch.cuda.is_bf16_supported():
+    if native_bf16():
         return torch.bfloat16, {"bf16": True, "fp16": False}
     return torch.float16, {"bf16": False, "fp16": True}   # e.g. T4 / Colab free tier
 
@@ -91,7 +100,7 @@ def main(argv=None):
     p.add_argument("--lora-dropout", type=float, default=0.05)
     p.add_argument("--4bit", dest="four_bit", action="store_true", help="QLoRA: load the base in 4-bit (needs an NVIDIA GPU and bitsandbytes)")
     p.add_argument("--device", default="auto", choices=["auto", "cpu"])
-    p.add_argument("--merge", action="store_true", help="also save base+adapter merged into --out/merged (not with --4bit)")
+    p.add_argument("--merge", action="store_true", help="also save base+adapter merged into --out/merged (with --4bit the merge loads a 16-bit base on the CPU: about 17 GB of RAM for a 7B model)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--report-to", default="none", help="e.g. trackio, wandb, tensorboard")
     a = p.parse_args(argv)
@@ -105,6 +114,8 @@ def main(argv=None):
 
     meta = json.loads((a.data / "meta.json").read_text())
     tasks = set(a.tasks.split(","))
+    if Path(a.base).is_dir():
+        a.base = str(Path(a.base).resolve())   # so the agent finds it from any folder
 
     processor = AutoProcessor.from_pretrained(a.base)
     # Coordinates in the dataset were written for this exact resize rule, so the processor must use it too.
@@ -127,16 +138,11 @@ def main(argv=None):
 
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
-    def only_tasks(ds_path):
-        ds = load_split(ds_path, a.data)
-        if tasks == {"actions", "grounding"}:
-            return ds
-        raw = [json.loads(line)["task"] for line in open(ds_path)]
-        return ds.select([i for i, t in enumerate(raw) if t in tasks])
-
-    train = only_tasks(a.data / "train.jsonl")
+    train = load_split(a.data / "train.jsonl", a.data, tasks)
     val_path = a.data / "val.jsonl"
-    val = only_tasks(val_path) if val_path.exists() and val_path.stat().st_size else None
+    val = load_split(val_path, a.data, tasks) if val_path.exists() and val_path.stat().st_size else None
+    if val is not None and len(val) == 0:
+        val = None
     print(f"training on {len(train)} examples ({a.tasks}); validating on {len(val) if val else 0}")
 
     peft_config = LoraConfig(
@@ -175,6 +181,7 @@ def main(argv=None):
     settings = json.dumps({
         "base_model": a.base, "coords": meta["coords"], "style": meta["style"], "max_pixels": meta["max_pixels"],
         "min_pixels": meta["min_pixels"], "history_images": meta["history_images"], "tasks": sorted(tasks),
+        "language": meta.get("language", "English"),
         "train_examples": len(train), "train_loss": result.training_loss,
     }, indent=2)
     (a.out / "leanwatch.json").write_text(settings)
@@ -182,13 +189,19 @@ def main(argv=None):
 
     if a.merge:
         if a.four_bit:
-            print("--merge skipped: merge into a 16-bit copy of the base instead of the 4-bit one.")
+            # A 4-bit base can't hold the merged weights exactly: load a 16-bit copy of the base
+            # (on the CPU, so it fits next to the training run) and merge the saved adapter into it.
+            from peft import PeftModel
+
+            del trainer, model
+            base16 = AutoModelForImageTextToText.from_pretrained(a.base, dtype=torch.bfloat16, device_map={"": "cpu"})
+            merged = PeftModel.from_pretrained(base16, str(a.out)).merge_and_unload()
         else:
             merged = trainer.model.merge_and_unload()
-            merged.save_pretrained(str(a.out / "merged"))
-            processor.save_pretrained(str(a.out / "merged"))
-            (a.out / "merged" / "leanwatch.json").write_text(settings)
-            print(f"saved merged model to {a.out / 'merged'}")
+        merged.save_pretrained(str(a.out / "merged"))
+        processor.save_pretrained(str(a.out / "merged"))
+        (a.out / "merged" / "leanwatch.json").write_text(settings)
+        print(f"saved merged model to {a.out / 'merged'}")
 
 
 if __name__ == "__main__":

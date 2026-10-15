@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--coords", default=None, choices=["abs", "rel1000"], help="how the model writes points: abs (UI-TARS-1.5, Qwen2.5-VL; default) or rel1000. Read from the adapter when you pass one")
     p.add_argument("--style", default=None, choices=["box", "point"], help="how points are written in the prompt: box (start_box=..., default) or point (point='<point>x y</point>'). Read from the adapter when you pass one")
     p.add_argument("--max-pixels", type=int, default=cfg.local_max_pixels, help="largest screenshot size, in pixels, the local model sees")
-    p.add_argument("--language", default=cfg.language, help="language for the explanations (default English)")
+    p.add_argument("--language", default=None, help="language for the explanations (default English, or what your fine-tuned model was trained with)")
     p.add_argument("--effort", default=cfg.effort, choices=["low", "medium", "high", "xhigh", "max"], help="claude brain only: how hard it thinks per step")
     p.add_argument("--speed", type=float, default=cfg.move_speed, help="pointer speed multiplier (default 1.0)")
     p.add_argument("--cli", metavar="TASK", help="run one task in this terminal, without the web page")
@@ -52,11 +53,13 @@ def main(argv: list[str] | None = None) -> None:
     if cfg.brain == "local":
         from .brains import resolve_model_id, trained_settings
 
+        # Which model: --model, else LEANWATCH_LOCAL_MODEL, else the adapter's base model, else the default.
+        if cfg.adapter and not args.model and not os.environ.get("LEANWATCH_LOCAL_MODEL"):
+            cfg.local_model = resolve_model_id(None, cfg.adapter)
         # A model you fine-tuned remembers how its data was written (train_sft.py saves leanwatch.json
         # next to the adapter and the merged model). Use the same settings, unless a flag says otherwise.
-        trained = trained_settings(cfg.adapter, args.model)
-        if cfg.adapter and not args.model:
-            cfg.local_model = resolve_model_id(None, cfg.adapter)
+        trained = trained_settings(cfg.adapter, cfg.local_model)
+        cfg.language = trained.get("language", cfg.language)
         cfg.coords = trained.get("coords", cfg.coords)
         cfg.style = trained.get("style", cfg.style)
         cfg.history_images = trained.get("history_images", cfg.history_images)
@@ -69,7 +72,8 @@ def main(argv: list[str] | None = None) -> None:
         cfg.style = args.style
     if args.max_pixels:
         cfg.local_max_pixels = args.max_pixels
-    cfg.language = args.language
+    if args.language:
+        cfg.language = args.language
     cfg.effort = args.effort
     cfg.move_speed = args.speed
     cfg.preload = args.preload

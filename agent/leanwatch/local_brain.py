@@ -11,7 +11,6 @@ show the thought to the person -> safety checks -> move the real mouse/keyboard.
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 from dataclasses import dataclass
@@ -22,22 +21,29 @@ from .controller import Controller, EmergencyStop
 from .hooks import Hooks, RunResult, Stopped, check_stop, run_action
 from .local_prompts import APPROVED_NOTE, build_messages, computer_prompt
 from .permissions import PermissionDenied
+from .risk import language_checked, risky_intent  # noqa: F401  (risky_intent is re-exported for tests)
 
-# Thoughts that announce something hard to undo. The person approves these first,
-# even if the model forgot to call ask_user.
-RISKY_INTENT = re.compile(
-    r"\b(delet\w*|remov\w*|eras\w*|uninstall\w*|install\w*|format\w*|wip\w*|"
-    r"purchas\w*|buy\w*|pay|paying|payment|checkout|send\w*|submit\w*|post(?:ing)?|publish\w*|"
-    r"empty(?:ing)? the (?:trash|recycle bin)|shut(?:ting)? down|restart\w*|sign(?:ing)? out|log(?:ging)? out|"
-    r"password|credit card|transfer\w*)\b",
-    re.IGNORECASE,
-)
-POINTER_ACTIONS = {"click", "left_single", "left_double", "right_single", "drag", "scroll", "type", "hotkey", "press"}
+# Actions that change nothing on the screen: no approval needed for these.
+PASSIVE_ACTIONS = {"wait", "move_to", "mouse_move", "finished", "ask_user", "call_user"}
+# After the person approves an ask_user step, the next turns carry it out without asking again
+# (e.g. "click Delete", then "the app asks to confirm, click Delete").
+APPROVAL_TURNS = 2
+END_MARKERS = ("<|im_end|>", "<|endoftext|>", "</s>", "<|end_of_text|>", "<|eot_id|>")
 
 
-def risky_intent(thought: str) -> str | None:
-    m = RISKY_INTENT.search(thought or "")
-    return m.group(0).lower() if m else None
+def clean_reply(text: str, extra_markers=()) -> str:
+    """Cut a raw decoded answer at the end-of-turn marker, keeping other special tokens.
+
+    The answer is decoded *with* special tokens because UI-TARS writes points as
+    <|box_start|>(x,y)<|box_end|>; the agent stores the answer as history, and history must look
+    exactly like the training data, which keeps those tokens.
+    """
+    markers = [m for m in (*END_MARKERS, *extra_markers) if m]
+    cut = min((i for i in (text.find(m) for m in markers) if i >= 0), default=len(text))
+    text = text[:cut]
+    for m in markers:
+        text = text.replace(m, "")
+    return text.strip()
 
 
 def set_image_size(processor, max_pixels: int | None = None, min_pixels: int | None = None) -> None:
@@ -83,7 +89,8 @@ class LocalModel:
         if device == "cpu" or not (cuda or mps):
             kwargs["dtype"] = torch.float32
         elif cuda:
-            kwargs["dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            # bf16 only where the GPU supports it natively (Ampere or newer); a T4 would emulate it slowly.
+            kwargs["dtype"] = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
             kwargs["device_map"] = "auto"
         else:
             kwargs["dtype"] = torch.float16
@@ -111,17 +118,31 @@ class LocalModel:
         self.model.eval()
         self.patch = getattr(self.processor.image_processor, "patch_size", 14)
 
-    def answer(self, messages: list[dict], images: list) -> ModelAnswer:
+    def answer(self, messages: list[dict], images: list, stop: threading.Event | None = None) -> ModelAnswer:
         import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList
 
         text = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         inputs = self.processor(text=[text], images=images, return_tensors="pt").to(self.model.device)
+        if "image_grid_thw" not in inputs:
+            raise RuntimeError(f"{self.model_id} does not report image sizes (image_grid_thw). LeanWatch works with "
+                               "Qwen2-VL, Qwen2.5-VL (UI-TARS-1.5) and Qwen3-VL family models.")
+
+        class StopWhenAsked(StoppingCriteria):
+            """Lets Stop end a long generation early instead of waiting for the full answer."""
+
+            def __call__(self, input_ids, scores, **kwargs):
+                return torch.full((input_ids.shape[0],), bool(stop and stop.is_set()), dtype=torch.bool, device=input_ids.device)
+
         with torch.inference_mode():
-            out = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens, do_sample=False)
-        reply = self.processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0]
+            out = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens, do_sample=False,
+                                      stopping_criteria=StoppingCriteriaList([StopWhenAsked()]))
+        tok = getattr(self.processor, "tokenizer", self.processor)
+        raw = tok.decode(out[0, inputs["input_ids"].shape[1]:], skip_special_tokens=False)
+        reply = clean_reply(raw, (getattr(tok, "eos_token", None), getattr(tok, "pad_token", None)))
         # The last image is the current screenshot; its grid tells us the size the model saw.
         _, gh, gw = inputs["image_grid_thw"][-1].tolist()
-        return ModelAnswer(reply.strip(), int(gw * self.patch), int(gh * self.patch))
+        return ModelAnswer(reply, int(gw * self.patch), int(gh * self.patch))
 
 
 class LocalBrain:
@@ -140,14 +161,17 @@ class LocalBrain:
         screenshots: list = []
         past: list[dict] = []
         bad_answers = 0
+        self.approved_turns = 0
+        self.ask_every_step = not language_checked(self.cfg.language)
         try:
             for _ in range(self.cfg.max_turns):
                 check_stop(self.stop)
                 self.hooks.wait_if_paused()
+                check_stop(self.stop)          # Stop pressed while paused: don't start another step
                 screenshots.append(self.controller.capture.screenshot())
                 messages, image_turns = build_messages(prompt, past, self.cfg.history_images)
                 t0 = time.monotonic()
-                answer = self.model.answer(messages, [screenshots[i] for i in image_turns])
+                answer = self.model.answer(messages, [screenshots[i] for i in image_turns], stop=self.stop)
                 check_stop(self.stop)
                 try:
                     parsed = parse_response(answer.text)
@@ -184,6 +208,8 @@ class LocalBrain:
             return [round(p[0] * sx), round(p[1] * sy)]
 
         asked = False
+        pre_approved = self.approved_turns > 0
+        self.approved_turns = max(0, self.approved_turns - 1)
         for a in parsed.actions:
             check_stop(self.stop)
             if a.name in ("finished",):
@@ -192,12 +218,15 @@ class LocalBrain:
                 question = a.text or parsed.thought or "May I continue?"
                 if not self.hooks.confirm(question, "The assistant wants your OK before this step."):
                     return RunResult(False, f"You said no to: {question} Nothing more was done."), None
+                self.approved_turns = APPROVAL_TURNS
                 return None, APPROVED_NOTE
-            if a.name in POINTER_ACTIONS and not asked:
+            if a.name not in PASSIVE_ACTIONS and not asked and not pre_approved:
                 reason = risky_intent(parsed.thought)
-                if reason:
+                if reason or self.ask_every_step:
                     asked = True
-                    if not self.hooks.confirm(parsed.thought, f"This step mentions “{reason}”, which can be hard to undo."):
+                    why = (f"This step mentions “{reason}”, which can be hard to undo." if reason else
+                           f"LeanWatch can't check {self.cfg.language} explanations for risky steps, so it asks before each one.")
+                    if not self.hooks.confirm(parsed.thought or a.name, why):
                         return RunResult(False, "You said no, so I stopped before that step."), None
             try:
                 self._do(a, at)

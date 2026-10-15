@@ -412,9 +412,8 @@
       h("div.callout.callout--warn", {}, h("strong", {}, "The local agent is not connected."), h("p", {}, bridge.blocker)),
       h("ol.steps-plain", {},
         h("li", {}, "Open a terminal in the project folder and run ", h("code", {}, "cd agent")),
-        h("li", {}, h("code", {}, "pip install -r requirements.txt")),
-        h("li", {}, "Set ", h("code", {}, "ANTHROPIC_API_KEY"), " or run ", h("code", {}, "ant auth login")),
-        h("li", {}, h("code", {}, "python -m leanwatch"), " opens this page, connected"),
+        h("li", {}, h("code", {}, "pip install -r requirements.txt"), " (no API key needed: the model runs on your computer)"),
+        h("li", {}, h("code", {}, "python -m leanwatch --web"), " shows the floating bubble and opens this page, connected"),
         h("li", {}, "Add ", h("code", {}, "--dry-run"), " to watch it plan without moving your mouse")),
       h("p.small.muted", {}, "Until then, the practice screen works fully in this browser."));
     setRunState("idle", "Offline");

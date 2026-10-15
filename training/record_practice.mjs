@@ -155,9 +155,10 @@ async function groundingFor(image) {
   for (const t of targets) counts.set(t.label.toLowerCase(), (counts.get(t.label.toLowerCase()) || 0) + 1);
   const usable = targets.filter((t) => t.label && !t.label.includes(".") && t.label.length <= 60 && counts.get(t.label.toLowerCase()) === 1);
   for (let i = usable.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [usable[i], usable[j]] = [usable[j], usable[i]]; }
+  // Kept with the episode and written only if the episode is kept: a discarded episode's
+  // screenshots are deleted, and its id (and image names) are reused by the next attempt.
   for (const t of usable.slice(0, args.groundingPerShot)) {
-    grFile.write(JSON.stringify({ image, label: t.label, role: t.role, target: t.target, bbox: box(t.bbox), width: px(1000), height: px(625) }) + "\n");
-    current.grounding++;
+    current.groundingRows.push({ image, label: t.label, role: t.role, target: t.target, bbox: box(t.bbox), width: px(1000), height: px(625) });
   }
 }
 
@@ -218,7 +219,7 @@ while (stats.episodes < args.episodes && attempts < args.episodes * 4) {
   }, instruction);
   if (!plan.ok) { stats.skippedUnplanned++; continue; }
 
-  current = { id: `e${String(stats.episodes + 1).padStart(5, "0")}`, steps: [], files: [], grounding: 0 };
+  current = { id: `e${String(stats.episodes + 1).padStart(5, "0")}`, steps: [], files: [], groundingRows: [] };
   const result = await page.evaluate(async (text) => {
     const lw = window.LeanWatch;
     const says = [];
@@ -256,9 +257,10 @@ while (stats.episodes < args.episodes && attempts < args.episodes * 4) {
     height: px(625),
     steps: current.steps,
   }) + "\n");
+  for (const row of current.groundingRows) grFile.write(JSON.stringify(row) + "\n");
   stats.episodes++;
   stats.steps += current.steps.length;
-  stats.grounding += current.grounding;
+  stats.grounding += current.groundingRows.length;
   for (const s of plan.skills) stats.bySkill[s] = (stats.bySkill[s] || 0) + 1;
   if (stats.episodes % 25 === 0) console.log(`${stats.episodes}/${args.episodes} episodes, ${stats.steps} steps, ${stats.grounding} grounding samples`);
   current = null;
