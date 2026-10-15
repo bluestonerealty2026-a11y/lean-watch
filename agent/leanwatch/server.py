@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import threading
+import traceback
 import uuid
 import webbrowser
 from pathlib import Path
@@ -23,6 +24,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .brains import load_local_model, make_brain, model_name
+from .errors import ModelError, Stopped
 from .hooks import Hooks, RunResult
 from .config import Config
 from .controller import Controller, DryRunBackend, PyAutoGuiBackend
@@ -227,14 +229,18 @@ class Session(Hooks):
                 confirm=self.confirm, stop=self.stop_event, shield=self.shield,
             )
             self.preview()
-            if self.cfg.brain == "local":
-                self.ensure_model()
-            brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=self.local_model)
+            model = self.ensure_model(self.stop_event) if self.cfg.brain == "local" else None
+            brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=model)
             result = brain.run(text)
+        except Stopped:                      # Stop while the model was still loading
+            result = RunResult(False, "Stopped. You are in control. (The model keeps loading for your next task.)")
+        except ModelError as err:            # already explained, and its details already printed
+            result = RunResult(False, str(err))
         except Exception as err:
-            if self.stop_event.is_set():
+            if self.stop_event.is_set():     # e.g. Stop while the desktop's permission dialog was up
                 result = RunResult(False, "Stopped. You are in control.")
             else:
+                traceback.print_exc()
                 result = RunResult(False, f"Could not run the task: {err}")
         finally:
             if wayland_screen is not None:
@@ -249,13 +255,37 @@ class Session(Hooks):
                    "result": result.message})
         self.emit(self.status())
 
-    def ensure_model(self):
-        """Load the local model once, even if a task and --preload ask at the same time."""
+    def ensure_model(self, stop: threading.Event | None = None):
+        """Load the local model once, even if a task and --preload ask at the same time.
+
+        A model whose process crashed or failed to load is replaced by a fresh one. Stop ends the wait
+        (with Stopped) while the model keeps loading in its own process.
+        """
         with self._model_lock:
-            if self.local_model is None:
+            model = self.local_model
+            if model is not None and getattr(model, "failed", False):
+                self.local_model = None
+                model.close()
+                model = None
+            if model is None:
                 self.narrate(f"Loading {self.cfg.local_model}. The first time this downloads several GB and can take a few minutes.", "thinking")
-                self.local_model = load_local_model(self.cfg)
-            return self.local_model
+                model = self.local_model = load_local_model(self.cfg)
+        wait_ready = getattr(model, "wait_ready", None)      # a model in its own process loads in the background
+        if wait_ready is not None:
+            wait_ready(stop, status=self._loading_note)
+        return model
+
+    def _loading_note(self, text: str) -> None:
+        self.narrate(text, "thinking")
+
+    def shutdown(self) -> None:
+        """Stop any task and end the model's process (LeanWatch is quitting)."""
+        self.stop()
+        with self._model_lock:
+            model, self.local_model = self.local_model, None
+        close = getattr(model, "close", None)
+        if close is not None:
+            close()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -387,7 +417,7 @@ def make_app(cfg: Config, token: str) -> web.Application:
         session.loop = asyncio.get_running_loop()
 
     async def on_shutdown(app):
-        session.stop()
+        session.shutdown()
         for ws in list(session.clients):
             await ws.close()
 
@@ -410,7 +440,10 @@ def preload_model(session) -> None:
         try:
             session.ensure_model()
             session.narrate("The model is loaded. I'm ready.", "thinking")
+        except ModelError as err:
+            session.narrate(str(err), "thinking")
         except Exception as err:
+            traceback.print_exc()
             session.narrate(f"Could not load the model yet: {err}", "thinking")
 
     threading.Thread(target=work, daemon=True, name="leanwatch-preload").start()

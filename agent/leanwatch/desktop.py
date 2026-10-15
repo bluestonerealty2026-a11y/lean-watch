@@ -179,7 +179,7 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
     try:
         return qt.exec()
     finally:
-        session.stop()
+        session.shutdown()          # also ends the model's process
         if stop_hotkey:
             try:
                 stop_hotkey()

@@ -41,14 +41,16 @@ def _relocatable() -> str:
 
 
 def gnome_binding(combo: str) -> str:
-    """'ctrl+alt+space' -> '<Control><Alt>space' (GNOME's accelerator syntax)."""
-    names = {"ctrl": "<Control>", "control": "<Control>", "alt": "<Alt>", "shift": "<Shift>",
-             "super": "<Super>", "cmd": "<Super>", "win": "<Super>", "meta": "<Super>"}
-    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
-    if not parts:
-        raise ValueError("empty shortcut")
-    *mods, key = parts
-    return "".join(names[m] for m in mods) + key
+    """'ctrl+alt+space' -> '<Control><Alt>space' (GNOME's accelerator syntax). Accepts and checks the same
+    names as --hotkey (native.parse_hotkey): a shortcut needs a modifier and one other key."""
+    from .native import parse_hotkey
+
+    parse_hotkey(combo)                     # raises ValueError for 'space', 'ctrl+alt', 'hyper+x', ...
+    gnome = {"ctrl": "<Control>", "control": "<Control>", "ctl": "<Control>", "alt": "<Alt>", "option": "<Alt>",
+             "opt": "<Alt>", "shift": "<Shift>", "cmd": "<Super>", "command": "<Super>", "super": "<Super>",
+             "win": "<Super>", "meta": "<Super>"}
+    *mods, key = [p.strip().lower() for p in combo.split("+") if p.strip()]
+    return "".join(gnome[m] for m in mods) + key
 
 
 def command(python: str = sys.executable) -> str:

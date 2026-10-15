@@ -1,4 +1,5 @@
-"""Build a tiny, randomly initialised Qwen2.5-VL (the architecture UI-TARS-1.5 uses).
+"""Build a tiny, randomly initialised Qwen2.5-VL (the architecture UI-TARS-1.5 uses), or a Qwen2-VL
+(UI-TARS-2B-SFT, the --small model) with family="qwen2_vl".
 
 It has the real model class, processor, chat template and special tokens, but a
 few thousand parameters instead of 7 billion, so the training and inference code
@@ -47,12 +48,14 @@ def _corpus():
     return lines
 
 
-def build(out_dir: str | Path, min_pixels: int = 56 * 56, max_pixels: int = 28 * 28 * 64) -> Path:
+def build(out_dir: str | Path, min_pixels: int = 56 * 56, max_pixels: int = 28 * 28 * 64, family: str = "qwen2_5_vl") -> Path:
     from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
     from transformers import (
         PreTrainedTokenizerFast, Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor,
-        Qwen2VLImageProcessor, Qwen2VLVideoProcessor,
+        Qwen2VLConfig, Qwen2VLForConditionalGeneration, Qwen2VLImageProcessor, Qwen2VLProcessor, Qwen2VLVideoProcessor,
     )
+
+    qwen2 = family == "qwen2_vl"
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -69,24 +72,28 @@ def build(out_dir: str | Path, min_pixels: int = 56 * 56, max_pixels: int = 28 *
     tokenizer.chat_template = CHAT_TEMPLATE
 
     image_processor = Qwen2VLImageProcessor(min_pixels=min_pixels, max_pixels=max_pixels)
-    processor = Qwen2_5_VLProcessor(image_processor=image_processor, tokenizer=tokenizer,
-                                    video_processor=Qwen2VLVideoProcessor(), chat_template=CHAT_TEMPLATE)
+    processor = (Qwen2VLProcessor if qwen2 else Qwen2_5_VLProcessor)(
+        image_processor=image_processor, tokenizer=tokenizer, video_processor=Qwen2VLVideoProcessor(),
+        chat_template=CHAT_TEMPLATE)
 
     ids = {t: tokenizer.convert_tokens_to_ids(t) for t in SPECIAL}
-    config = Qwen2_5_VLConfig(
+    vision = (dict(depth=2, embed_dim=32, hidden_size=64, num_heads=2, mlp_ratio=2) if qwen2 else
+              dict(depth=2, hidden_size=32, intermediate_size=64, num_heads=2, out_hidden_size=64,
+                   fullatt_block_indexes=[1], window_size=112))
+    config = (Qwen2VLConfig if qwen2 else Qwen2_5_VLConfig)(
         text_config=dict(
             vocab_size=len(tokenizer), hidden_size=64, intermediate_size=128, num_hidden_layers=2,
             num_attention_heads=4, num_key_value_heads=2, max_position_embeddings=4096,
             rope_parameters={"rope_type": "default", "rope_theta": 1_000_000.0, "mrope_section": [2, 3, 3]},
             eos_token_id=ids["<|im_end|>"], pad_token_id=ids["<|endoftext|>"], bos_token_id=None,
         ),
-        vision_config=dict(depth=2, hidden_size=32, intermediate_size=64, num_heads=2, out_hidden_size=64,
-                           fullatt_block_indexes=[1], window_size=112),
+        vision_config=vision,
         image_token_id=ids["<|image_pad|>"], video_token_id=ids["<|video_pad|>"],
         vision_start_token_id=ids["<|vision_start|>"], vision_end_token_id=ids["<|vision_end|>"],
         eos_token_id=ids["<|im_end|>"], pad_token_id=ids["<|endoftext|>"], bos_token_id=None,
+        **({"tie_word_embeddings": True} if qwen2 else {}),     # as in UI-TARS-2B-SFT
     )
-    model = Qwen2_5_VLForConditionalGeneration(config)
+    model = (Qwen2VLForConditionalGeneration if qwen2 else Qwen2_5_VLForConditionalGeneration)(config)
     model.generation_config.eos_token_id = ids["<|im_end|>"]
     model.generation_config.pad_token_id = ids["<|endoftext|>"]
     model.save_pretrained(out)

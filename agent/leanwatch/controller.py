@@ -12,6 +12,7 @@ import random
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from typing import Callable, Protocol
 
 from .permissions import Permissions, PermissionDenied, risky_key, risky_text
@@ -323,15 +324,23 @@ class Controller:
             raise ValueError("coordinate must be [x, y]")
         return self.g.to_screen(float(coord[0]), float(coord[1]))
 
-    def _with_modifiers(self, text: str | None, fn: Callable[[], None]) -> None:
-        mods = parse_combo(text, self.platform) if text else []
-        for m in mods:
-            self.backend.key_down(m)
+    @contextmanager
+    def _holding(self, keys: list[str]):
+        """Hold keys down for the block. Whatever happens (a key this computer can't press, Stop), every
+        key that went down comes back up: a stuck Ctrl would change everything the person types next."""
+        down = []
         try:
-            fn()
+            for k in keys:
+                self.backend.key_down(k)
+                down.append(k)
+            yield
         finally:
-            for m in reversed(mods):
-                self.backend.key_up(m)
+            for k in reversed(down):
+                self.backend.key_up(k)
+
+    def _with_modifiers(self, text: str | None, fn: Callable[[], None]) -> None:
+        with self._holding(parse_combo(text, self.platform) if text else []):
+            fn()
 
     def screenshot_block(self) -> list[dict]:
         if self.capture is None:
@@ -469,19 +478,12 @@ class Controller:
         if not keys:
             raise ValueError("key text is empty")
         if name == "hold_key":
-            for k in keys:
-                b.key_down(k)
-            try:
+            with self._holding(keys):
                 self._sleep(min(float(inp.get("duration", 1)), 300))
-            finally:
-                for k in reversed(keys):
-                    b.key_up(k)
             return "OK"
         for _ in range(max(1, min(int(inp.get("repeat", 1)), 100))):
-            for k in keys:
-                b.key_down(k)
-            for k in reversed(keys):
-                b.key_up(k)
+            with self._holding(keys):
+                pass
             time.sleep(0.03)
         return "OK"
 

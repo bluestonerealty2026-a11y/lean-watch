@@ -32,17 +32,23 @@ python -m leanwatch --autostart on      # optional: start it every time you log 
 
 On Ubuntu/Debian, Qt also needs one system library: `sudo apt install libxcb-cursor0` (LeanWatch tells you if it's missing).
 
-1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac).
+**If something goes wrong**, run `python -m leanwatch --check`: it imports the AI libraries the way the model does and names the real error and its fix. A mixed-up Python install (common in an Anaconda base environment) is most reliably fixed with a clean environment:
+
+```bash
+conda create -n leanwatch python=3.11 -y && conda activate leanwatch && pip install -r requirements.txt
+```
+
+1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac; on Linux with Wayland, run `python -m leanwatch --shortcut on` once first).
 2. Type what you need and press <kbd>Enter</kbd> or **Go**.
 3. The first time, LeanWatch asks to use your mouse and keyboard. Click **Allow for this session**.
 4. Watch. Each step appears in the box. LeanWatch asks before anything that is hard to undo.
-5. **Stop** (or <kbd>Esc</kbd>) ends it at once. Moving the mouse yourself pauses it.
+5. **Stop** (or <kbd>Esc</kbd>) ends it at once. Moving the mouse yourself pauses it (on Wayland LeanWatch can't see that: use Stop, <kbd>Esc</kbd> or your desktop's screen-sharing indicator).
 
 Drag the bubble anywhere; it remembers the spot. Right-click it to hide it (the shortcut brings it back), move it back to the corner, or quit.
 
 The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B) (Apache-2.0, about 16 GB) from Hugging Face. Everything then runs on your computer: no API key, and no screenshots leave the machine. On an NVIDIA GPU with less than 24 GB, add `--4bit` (`pip install bitsandbytes` first) to fit it in about 6 GB. On an Apple Silicon Mac it runs on the GPU (`mps`) as is. `--preload` loads the model at start-up so the first task starts quickly.
 
-**A laptop without a big GPU** (most laptops): on a CPU the 7B model needs about 35 GB of memory. Use `--small` instead: [UI-TARS-2B-SFT](https://huggingface.co/ByteDance-Seed/UI-TARS-2B-SFT) (Apache-2.0, about 4.5 GB download, about 10 GB of memory). It is less accurate and takes several seconds to a minute per step on a CPU, but it runs. `python -m leanwatch --check` tells you which one fits.
+**A laptop without a big GPU** (most laptops): on a CPU the 7B model needs about 37 GB of memory. Use `--small` instead: [UI-TARS-2B-SFT](https://huggingface.co/ByteDance-Seed/UI-TARS-2B-SFT) (Apache-2.0, about 4.5 GB download). When 32-bit weights (about 12 GB) don't fit, LeanWatch loads them in 16-bit, about 6 GB, so it runs on an 8 GB laptop if you close your web browser first. It is less accurate and takes from several seconds to a few minutes per step on a CPU, but it runs. `python -m leanwatch --check` tells you which one fits.
 
 | Option | What it does |
 | --- | --- |
@@ -57,6 +63,7 @@ The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/
 | `--small` | The 2B model, for laptops without a big GPU |
 | `--model` | Another Hugging Face model id or a local folder (default `ByteDance-Seed/UI-TARS-1.5-7B`); the coordinate format is worked out from the model |
 | `--device`, `--max-pixels` | Where the model runs (`auto`, `cuda`, `mps`, `cpu`) and the largest screenshot it sees |
+| `--cpu-dtype` | Weight precision on a CPU: `auto` (32-bit if it fits in memory, else 16-bit), `float32` or `bfloat16` |
 | `--language Spanish` | Language of the explanations |
 | `--web` | Also open the web control center (live screenshots, step log) |
 | `--no-bubble` | Web control center only, no bubble |
@@ -104,6 +111,7 @@ agent/leanwatch/
   desktop.py           runs the bubble (main thread) and the agent server (background thread)
   autostart.py         start at login on Windows, macOS and Linux
   local_brain.py       default brain: open GUI model on this computer (screenshot -> Thought + Action)
+  local_model.py       loads the model and gets one answer per step; model_process.py runs it in its own process
   actions.py           UI-TARS action language: parse answers, write training targets, coordinate spaces
   local_prompts.py     the prompt and conversation, shared by training and the agent
   brains.py            picks the brain; reads a fine-tuned model's saved settings

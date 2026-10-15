@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import threading
+import traceback
 from pathlib import Path
 
 from .config import Config
 from .controller import Controller
+from .errors import ModelError, explain_load_error
 from .hooks import Hooks
 
 
@@ -41,16 +43,31 @@ def resolve_model_id(model: str | None, adapter: str | None) -> str:
     return model or adapter_settings(adapter).get("base_model") or DEFAULT_LOCAL_MODEL
 
 
-def load_local_model(cfg: Config):
-    from .local_brain import LocalModel
+def load_local_model(cfg: Config, status=None):
+    """Start the local model.
+
+    By default it loads in its own process (model_process.py) and this returns at once; its wait_ready()
+    or first answer() waits for the load. With cfg.model_process off it loads here, before returning.
+    status: also told which weight precision was chosen and why (that line is always printed).
+    """
+    def note(text: str) -> None:
+        print(f"  {text}", flush=True)
+        if status:
+            status(text)
+
+    options = dict(adapter=cfg.adapter, device=cfg.device, load_in_4bit=cfg.load_in_4bit,
+                   max_pixels=cfg.local_max_pixels, max_new_tokens=cfg.max_new_tokens, cpu_dtype=cfg.cpu_dtype)
+    if cfg.model_process:
+        from .model_process import ModelProcess
+
+        return ModelProcess(cfg.local_model, status=note, **options)
+    from .local_model import LocalModel
 
     try:
-        import torch  # noqa: F401
-        import transformers  # noqa: F401
-    except ModuleNotFoundError as err:
-        raise RuntimeError(f"The local model needs {err.name}: cd agent && pip install -r requirements.txt") from None
-    return LocalModel(cfg.local_model, adapter=cfg.adapter, device=cfg.device, load_in_4bit=cfg.load_in_4bit,
-                      max_pixels=cfg.local_max_pixels, max_new_tokens=cfg.max_new_tokens)
+        return LocalModel(cfg.local_model, status=note, **options)
+    except Exception as err:
+        traceback.print_exc()
+        raise ModelError(explain_load_error(err, cfg.local_model, cfg.cpu_dtype)) from err
 
 
 def make_brain(cfg: Config, controller: Controller, hooks: Hooks, stop: threading.Event, local_model=None):

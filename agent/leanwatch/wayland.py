@@ -61,12 +61,18 @@ def wanted() -> bool:
     return wayland_session() and os.environ.get("LEANWATCH_WAYLAND", "1") != "0"
 
 
+def _saved_token(state_file: Path) -> str | None:
+    try:
+        data = json.loads(state_file.read_text())
+    except (OSError, ValueError):
+        return None
+    token = data.get("restore_token") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token else None
+
+
 def will_ask(state_file: Path | None = None) -> bool:
     """True if the desktop will show its permission dialog (nothing remembered yet)."""
-    try:
-        return not json.loads((state_file or STATE_FILE).read_text()).get("restore_token")
-    except (OSError, ValueError):
-        return True
+    return _saved_token(state_file or STATE_FILE) is None
 
 
 ASK_TEXT = ("Your desktop will ask to share the screen. Turn on “Allow Remote Interaction”, then click Share "
@@ -234,10 +240,7 @@ class RemoteDesktop:
 
     # ---------------- start / stop ----------------
     def _load_token(self) -> str | None:
-        try:
-            return json.loads(self.state_file.read_text()).get("restore_token") or None
-        except (OSError, ValueError):
-            return None
+        return _saved_token(self.state_file)
 
     def _save_token(self, token: str | None) -> None:
         try:
@@ -580,11 +583,15 @@ class PipeWireFrames:
                 line = self._ask(3.0, time.monotonic() - 0.2)
             parts = line.split()
             if len(parts) != 4 or parts[0] != "frame":
+                if not line:
+                    # No answer in time: a late one would be taken for the next picture. This reader is done.
+                    self.close()
                 raise PortalError(f"The screen reader sent no picture ({line or 'no answer'}).")
             w, h, stride = int(parts[1]), int(parts[2]), int(parts[3])
             data = self._read(stride * h, timeout=10)
-        if len(data) != stride * h:
-            raise PortalError("The screen reader sent a broken picture.")
+            if len(data) != stride * h:
+                self.close()
+                raise PortalError("The screen reader sent a broken picture.")
         return Image.frombuffer("RGB", (w, h), data, "raw", "BGRX", stride, 1).copy()
 
     def _ask(self, wait: float, since: float | None = None) -> str:
@@ -631,6 +638,21 @@ def portal_screenshot(bus: PortalBus | None = None, stop: threading.Event | None
             pass
 
 
+def crop_to_stream(img, position, size):
+    """The Screenshot portal pictures every monitor; the session shares one, and the pointer's coordinates
+    are that monitor's. Cut it out (its place in the picture, trying the usual scales: 1:1, then the
+    monitor filling the picture's height or width)."""
+    x, y = position
+    w, h = size
+    if (x, y) == (0, 0) and abs(img.width / img.height - w / h) < 0.01:
+        return img
+    for s in (1.0, img.height / (y + h), img.width / (x + w)):
+        box = (round(x * s), round(y * s), round((x + w) * s), round((y + h) * s))
+        if box[2] <= img.width and box[3] <= img.height and box[2] > box[0] and box[3] > box[1]:
+            return img.crop(box)
+    return img
+
+
 class WaylandScreen:
     """The remote desktop session for one task: backend (mouse and keyboard) and grab() for ScreenCapture."""
 
@@ -638,25 +660,35 @@ class WaylandScreen:
         self.remote = RemoteDesktop()
         self.remote.start(stop=stop, asking=asking)
         self.backend = PortalBackend(self.remote)
-        self.frames = None
         self.note = ""
+        self.frames = self._start_frames()
+
+    def _start_frames(self):
         python = find_gst_python()
-        if python:
-            try:
-                self.frames = PipeWireFrames(self.remote, python)
-            except Exception as err:
-                self.note = f"Reading the screen stream failed ({err}); using screenshots instead."
-        else:
+        if not python:
             self.note = ("GStreamer's PipeWire plugin wasn't found (sudo apt install gstreamer1.0-pipewire python3-gi), "
                          "so LeanWatch takes screenshots instead: the screen flashes each time.")
+            return None
+        try:
+            return PipeWireFrames(self.remote, python)
+        except Exception as err:
+            self.note = f"Reading the screen stream failed ({err}); using screenshots instead."
+            return None
 
     def grab(self, since: float | None = None):
         """The whole screen (in the screen's own pixels). See PipeWireFrames.grab for `since`."""
         if self.remote.closed.is_set():
             raise SharingStopped("You stopped the screen sharing, so I stopped.")
         if self.frames is not None:
-            return self.frames.grab(since=since, nudge=self.backend.nudge)
-        return portal_screenshot(self.remote.bus)
+            try:
+                return self.frames.grab(since=since, nudge=self.backend.nudge)
+            except PortalError:
+                # A stuck or crashed reader: start a new one once, else use screenshots for the rest of the task.
+                self.frames.close()
+                self.frames = self._start_frames()
+                if self.frames is not None:
+                    return self.frames.grab(since=since, nudge=self.backend.nudge)
+        return crop_to_stream(portal_screenshot(self.remote.bus), self.remote.position, self.backend.size())
 
     def close(self) -> None:
         if self.frames is not None:
