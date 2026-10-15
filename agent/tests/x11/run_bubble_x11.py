@@ -145,6 +145,29 @@ try:
     st = wait_for(lambda s: s["expanded"], 5); time.sleep(0.4)
     shot("06-box-top-left")
     check("box opens toward the middle of the screen", st["panel"][1] <= by + 2 and st["panel"][0] <= bx + 2, str(st["panel"]))
+
+    # 7. the keyboard shortcut, pressed like a person would, from another app
+    xdo("key", "Escape")
+    st = wait_for(lambda s: not s["expanded"], 5)
+    xdo("windowactivate", "--sync", wid)
+    xdo("key", "ctrl+alt+space")
+    st = wait_for(lambda s: s["expanded"], 5)
+    check("Ctrl+Alt+Space opens the box from another app", st.get("expanded"))
+    time.sleep(0.3)
+    check("the shortcut gives the box the keyboard", xdo("getactivewindow", "getwindowname") == "LeanWatch",
+          xdo("getactivewindow", "getwindowname"))
+    xdo("type", "--delay", "30", "hi")
+    time.sleep(0.3)
+    term = subprocess.run(["xdotool", "search", "--name", "^Terminal$"], env=env, capture_output=True, text=True).stdout.split()
+    xdo("key", "Escape")
+
+    # 8. the round bubble is not managed by the window manager (stays above full-screen apps on GNOME and KDE)
+    st = wait_for(lambda s: not s["expanded"], 5)
+    ids = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "LeanWatch"], env=env, capture_output=True, text=True).stdout.split()
+    infos = [subprocess.run(["xwininfo", "-id", i], env=env, capture_output=True, text=True).stdout for i in ids]
+    small = [t for t in infos if re.search(r"Width: 76\b", t)]
+    check("the bubble is an override-redirect window", small and "Override Redirect State: yes" in small[0],
+          small[0].split("Override Redirect State:")[1].split()[0] if small and "Override Redirect State:" in small[0] else "not found")
 finally:
     for p in reversed(procs):
         p.terminate()

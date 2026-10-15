@@ -87,6 +87,10 @@ class Native:
         """Called every couple of seconds: other always-on-top windows may have covered ours."""
         widget.raise_()
 
+    def override_redirect_bubble(self) -> bool:
+        """Linux/X11: make the round bubble a window the window manager doesn't manage (always on top)."""
+        return False
+
     def window_rect_px(self, widget):
         """The window's rectangle in mouse pixels (pyautogui/mss), or None to let the caller compute it."""
         return None
@@ -522,7 +526,20 @@ class MacNative(Native):
 # ---------------------------------------------------------------------------
 # Linux (X11; under Wayland LeanWatch runs through XWayland)
 # ---------------------------------------------------------------------------
+def wayland_session() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE") == "wayland"
+
+
 class X11Native(Native):
+    """Linux. A real X11 session works fully; under Wayland LeanWatch runs through XWayland.
+
+    - In an X11 session the round bubble is an override-redirect window (no window manager involved):
+      GNOME and KDE both draw those above everything, including full-screen apps (KDE puts ordinary
+      keep-above windows *under* a focused full-screen app), on every virtual desktop.
+    - The command box stays a managed window (it needs the keyboard), kept above and on all desktops.
+    - The shortcut is an X key grab: it works without permissions and the key doesn't reach the app.
+    """
+
     name = "x11"
 
     def __init__(self):
@@ -533,9 +550,12 @@ class X11Native(Native):
             self.dpy = display.Display()
             self.root = self.dpy.screen().root
             self.atom = lambda name: self.dpy.intern_atom(name)
-            self._lock = threading.Lock()
+            self._lock = threading.Lock()   # python-xlib connections aren't thread-safe: this one is GUI-thread only
         except Exception:
             self.dpy = None
+
+    def override_redirect_bubble(self) -> bool:
+        return self.dpy is not None and not wayland_session()
 
     def supports_translucency(self) -> bool:
         if self.dpy is None:
@@ -553,12 +573,12 @@ class X11Native(Native):
 
     def after_show(self, widget) -> None:
         """On every virtual desktop and above other windows. Window managers drop this when a window hides."""
-        if self.dpy is None:
-            return
+        if self.dpy is None or widget.windowFlags() & _bypass_flag():
+            return          # override-redirect windows aren't managed: nothing to tell the window manager
         with self._lock:
             wid = int(widget.winId())
-            self._send(wid, "_NET_WM_STATE", [1, self.atom("_NET_WM_STATE_STICKY"), self.atom("_NET_WM_STATE_ABOVE"), 1])
-            self._send(wid, "_NET_WM_DESKTOP", [0xFFFFFFFF, 1])
+            self._send(wid, "_NET_WM_STATE", [1, self.atom("_NET_WM_STATE_STICKY"), self.atom("_NET_WM_STATE_ABOVE"), 2])
+            self._send(wid, "_NET_WM_DESKTOP", [0xFFFFFFFF, 2])
 
     def focus_tracker(self) -> FocusTracker:
         if self.dpy is None:
@@ -578,15 +598,76 @@ class X11Native(Native):
 
         def activate(wid):
             with self._lock:
-                self._send(wid, "_NET_ACTIVE_WINDOW", [2, self.X.CurrentTime, 0])   # 2 = asked for by a pager/user tool
+                # source 2 = a pager or tool acting for the user, timestamp 0 = now: GNOME and KDE both honour it.
+                self._send(wid, "_NET_ACTIVE_WINDOW", [2, self.X.CurrentTime, 0])
+            deadline = time.monotonic() + 0.5          # wait until it is really active, before the agent types
+            while time.monotonic() < deadline and current() != wid:
+                time.sleep(0.02)
 
         return FocusTracker(current, is_ours, activate)
 
+    def register_hotkey(self, combo: str, callback):
+        """Grab the key combination on the root window, in its own thread and X connection."""
+        if self.dpy is None:
+            return None
+        import select
+
+        from Xlib import X, XK, display, error
+
+        mods, key = parse_hotkey(combo)
+        bits = {"ctrl": X.ControlMask, "alt": X.Mod1Mask, "shift": X.ShiftMask, "cmd": X.Mod4Mask}
+        mask = 0
+        for m in mods:
+            mask |= bits[m]
+        name = key.upper() if (key.startswith("f") and key[1:].isdigit()) else key
+        keysym = XK.string_to_keysym(name)
+        state = {"ok": False}
+        ready, stop = threading.Event(), threading.Event()
+        variants = (0, X.LockMask, X.Mod2Mask, X.LockMask | X.Mod2Mask)   # also with Caps Lock / Num Lock on
+
+        def run():
+            d = display.Display()
+            root = d.screen().root
+            code = d.keysym_to_keycode(keysym) if keysym else 0
+            if not code:
+                ready.set()
+                d.close()
+                return
+            catch = error.CatchError(error.BadAccess)
+            for extra in variants:
+                root.grab_key(code, mask | extra, True, X.GrabModeAsync, X.GrabModeAsync, onerror=catch)
+            d.sync()
+            if catch.get_error():         # another program already uses this combination
+                ready.set()
+                d.close()
+                return
+            state["ok"] = True
+            ready.set()
+            while not stop.is_set():
+                select.select([d.fileno()], [], [], 0.25)
+                while d.pending_events():
+                    ev = d.next_event()
+                    if ev.type == X.KeyPress and ev.detail == code:
+                        callback()
+            for extra in variants:
+                root.ungrab_key(code, mask | extra)
+            d.close()
+
+        threading.Thread(target=run, daemon=True, name="leanwatch-hotkey").start()
+        ready.wait(3)
+        return stop.set if state["ok"] else None
+
     def notes(self) -> list[str]:
-        if os.environ.get("WAYLAND_DISPLAY"):
-            return ["Wayland session: LeanWatch runs through XWayland. Some desktops keep Wayland apps above it; "
-                    "for full control log in with an X11 (Xorg) session."]
+        if wayland_session():
+            return ["Wayland session: LeanWatch can only see and control older X11 apps here (most apps are Wayland "
+                    "now). For full control, log in to an X11 / 'Xorg' session where your distribution still offers one."]
         return []
+
+
+def _bypass_flag():
+    from PySide6.QtCore import Qt
+
+    return Qt.X11BypassWindowManagerHint
 
 
 def for_platform(platform: str = sys.platform) -> Native:

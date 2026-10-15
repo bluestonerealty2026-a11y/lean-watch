@@ -12,6 +12,7 @@ All three start a small launcher script in ~/.leanwatch that writes output to ~/
 
 from __future__ import annotations
 
+import os
 import plistlib
 import sys
 from pathlib import Path
@@ -70,7 +71,8 @@ class Autostart:
         if self.platform == "darwin":
             return self.home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
         if self.platform.startswith("linux"):
-            return self.home / ".config" / "autostart" / "leanwatch.desktop"
+            config = os.environ.get("XDG_CONFIG_HOME") if self.home == Path.home() else None
+            return Path(config or self.home / ".config") / "autostart" / "leanwatch.desktop"
         return None
 
     def winreg(self):
@@ -127,7 +129,8 @@ class Autostart:
             "X-GNOME-Autostart-enabled=true\n"
             "X-GNOME-Autostart-Delay=5\n"
         )
-        return f"LeanWatch will start when you log in ({entry})."
+        return (f"LeanWatch will start when you log in ({entry}). If your window manager doesn't run autostart "
+                f"entries (i3, sway, bspwm, ...), add this to its config instead: {python} {self.launcher}")
 
     def remove(self) -> str:
         removed = False

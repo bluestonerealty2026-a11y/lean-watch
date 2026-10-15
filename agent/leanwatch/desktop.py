@@ -56,6 +56,15 @@ class ServerThread(threading.Thread):
         self.join(5)
 
 
+def _xcb_cursor_available() -> bool:
+    """Qt 6.5+ can't start its X11 plugin without libxcb-cursor, and then aborts without a useful message."""
+    if os.environ.get("QT_QPA_PLATFORM", "xcb").split(":")[0] not in ("xcb", ""):
+        return True
+    import ctypes.util
+
+    return ctypes.util.find_library("xcb-cursor") is not None
+
+
 def preload_model(session) -> None:
     """Load the local model in the background so the first task starts quickly."""
     def work():
@@ -77,6 +86,10 @@ def run(cfg: Config, web_page: bool = False, hotkey: str | None = DEFAULT_HOTKEY
         # app LeanWatch is working in), and Qt must not turn LeanWatch into a Dock app at launch.
         os.environ.setdefault("QT_MAC_SET_RAISE_PROCESS", "0")
         os.environ.setdefault("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1")
+    if sys.platform.startswith("linux") and not _xcb_cursor_available():
+        print("Qt needs the libxcb-cursor library to show the bubble. Install it, e.g. on Ubuntu/Debian:")
+        print("  sudo apt install libxcb-cursor0        (Fedora: sudo dnf install xcb-util-cursor)")
+        return 1
     if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
         # Qt can't place always-on-top windows on Wayland, and pyautogui needs X anyway: use XWayland.
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")

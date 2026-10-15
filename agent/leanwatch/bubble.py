@@ -161,9 +161,12 @@ class BubbleButton(QWidget):
     dropped = Signal(QPoint)          # after the person drags it somewhere
     menu_requested = Signal(QPoint)
 
-    def __init__(self, translucent: bool = True):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
-                         | Qt.NoDropShadowWindowHint)   # it paints its own shadow
+    def __init__(self, translucent: bool = True, bypass_wm: bool = False):
+        flags = (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
+                 | Qt.NoDropShadowWindowHint)   # it paints its own shadow
+        if bypass_wm:
+            flags |= Qt.X11BypassWindowManagerHint   # X11: drawn above everything, on every desktop
+        super().__init__(None, flags)
         self.setObjectName("leanwatch-bubble")
         self.setWindowTitle("LeanWatch")
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -641,7 +644,12 @@ class BubbleApp(QObject):
         self.settings_path = settings_path
         self.screen_px_size = screen_px_size or getattr(session, "screen_size", None)
         translucent = translucency_ok(native)
-        self.bubble = BubbleButton(translucent)
+        bypass = False
+        try:
+            bypass = bool(native.override_redirect_bubble())
+        except Exception:
+            pass
+        self.bubble = BubbleButton(translucent, bypass_wm=bypass)
         self.panel = Panel(translucent)
         self.expanded = False
         self.running = False

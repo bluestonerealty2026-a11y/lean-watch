@@ -58,7 +58,7 @@ The first task downloads [UI-TARS-1.5-7B](https://huggingface.co/ByteDance-Seed/
 
 - **Windows 10/11**: works as is: no permissions to grant. The bubble stays above other windows (not above the Start menu, the lock screen or exclusive-fullscreen games) and on every virtual desktop. On Windows 10 version 2004 or newer it is invisible in screenshots, so the model never sees it. LeanWatch can't control apps that run as administrator, unless it runs as administrator too.
 - **macOS**: allow your terminal (or Python) under System Settings → Privacy & Security → **Accessibility** (to move the mouse and for the shortcut) and **Screen Recording** (to take screenshots), then restart it. Install `pyobjc-framework-Cocoa` (included in `requirements.txt` on macOS) so the bubble floats over full-screen apps and on every Space.
-- **Linux**: works on X11 desktops (GNOME on Xorg, KDE, Xfce, …). Under Wayland, LeanWatch runs through XWayland, and some desktops keep native Wayland apps above it; log in with an "Xorg" session for full control.
+- **Linux**: works fully in an X11 session (Ubuntu 24.04 "Ubuntu on Xorg", KDE Plasma X11, Xfce, MATE, Cinnamon, …): the bubble stays above everything, including full-screen apps, on every workspace, and the shortcut needs no permissions. Install `libxcb-cursor0` if Qt asks for it. In a Wayland session (Ubuntu 25.10 and newer, Fedora, Plasma 6.8) the bubble still shows, but the agent can only see and control older X11 apps, because Wayland doesn't let one app read the screen or move the mouse for others; log in to an X11 session where your distribution still offers one. If your window manager doesn't run autostart entries (i3, sway, …), `--autostart on` prints the line to add to its config.
 
 ## Safety
 
