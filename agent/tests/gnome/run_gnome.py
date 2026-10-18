@@ -184,6 +184,9 @@ try:
     check("the bubble appears on the Wayland desktop", st, (OUT / "driver.out").read_text()[-800:] if not st else "")
     if not st:
         raise SystemExit(1)
+    # GNOME opens its overview at start-up (it hides ordinary windows): make sure it is closed now.
+    wait_for(lambda: shell.ev("Main.overview.hide(); Main.overview.visible") is False, 15)
+    time.sleep(0.5)
     check("LeanWatch knows it is on Wayland", st["wayland"])
     check("no keyboard shortcut is promised on Wayland without GNOME's own", st["shortcut_ok"] is False)
     time.sleep(0.8)

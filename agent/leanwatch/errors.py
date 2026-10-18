@@ -101,8 +101,12 @@ def in_conda() -> bool:
 def clean_env_command() -> str:
     """A fresh environment with only what LeanWatch needs: the surest fix for a mixed-up install."""
     req = requirements_arg()
+    # Without an NVIDIA GPU, torch's CPU build is a ~200 MB download instead of several GB of CUDA libraries.
+    cpu = ("pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && "
+           if sys.platform.startswith("linux") and not os.path.exists("/proc/driver/nvidia") else "")
     if in_conda():
-        return f"conda create -n leanwatch python=3.11 -y && conda activate leanwatch && pip install -r {req}"
+        # Python 3.12: packages in ~/.local/lib/python3.11 (pip install --user) can't leak into it.
+        return f"conda create -n leanwatch python=3.12 -y && conda activate leanwatch && {cpu}pip install -r {req}"
     if os.name == "nt":
         return f"py -m venv %USERPROFILE%\\leanwatch-env && %USERPROFILE%\\leanwatch-env\\Scripts\\pip install -r {req}"
     return f"python3 -m venv ~/leanwatch-env && ~/leanwatch-env/bin/pip install -r {req}"

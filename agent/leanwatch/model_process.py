@@ -62,6 +62,7 @@ class ModelProcess:
                                  args=(child_conn, self._stop_flag, loader, model_id, options, _log_file()))
         self._proc.start()
         child_conn.close()                     # so that our end reports EOF when the child dies
+        own_scope(self._proc.pid)
         _running.add(self)
         self._reader = threading.Thread(target=self._read, daemon=True, name="leanwatch-model-reader")
         self._reader.start()
@@ -69,6 +70,16 @@ class ModelProcess:
     @property
     def pid(self) -> int | None:
         return self._proc.pid
+
+    @property
+    def busy(self) -> bool:
+        """Still working on a step whose answer nobody waits for any more (Stop came too late to cut it)."""
+        return self._unfinished is not None
+
+    def wait_idle(self, stop: threading.Event | None = None) -> None:
+        """Wait until that step is done, so the next screenshot is taken after it, not before."""
+        with self._asking:
+            self._collect_unfinished(stop)
 
     @property
     def failed(self) -> bool:
@@ -204,13 +215,18 @@ class ModelProcess:
                 self._changed.notify_all()
         self._proc.join(10)
         with self._changed:
-            if self._error is None:
-                if self._closing:
-                    self._error = "The model was shut down."
-                else:
-                    self._error = crash_message(self._proc.exitcode, self.model_id, self.options.get("cpu_dtype", "auto"))
-                    print(f"LeanWatch: {self._error}", file=sys.stderr, flush=True)
-            self._changed.notify_all()
+            try:
+                if self._error is None:
+                    if self._closing:
+                        self._error = "The model was shut down."
+                    else:
+                        self._error = crash_message(self._proc.exitcode, self.model_id, self.options.get("cpu_dtype", "auto"))
+                        print(f"LeanWatch: {self._error}", file=sys.stderr, flush=True)
+            except Exception:
+                traceback.print_exc()
+                self._error = f"The model's process ended unexpectedly (exit code {self._proc.exitcode})."
+            finally:
+                self._changed.notify_all()     # whatever happened, nobody may keep waiting for this process
 
     def _note(self, text: str) -> None:
         with self._changed:
@@ -221,6 +237,35 @@ class ModelProcess:
                 status(text)
             except Exception:
                 pass                           # a broken listener must not stop the reader
+
+
+def own_scope(pid: int | None) -> None:
+    """Linux with systemd (Ubuntu): put the model's process in its own cgroup ("scope").
+
+    Ubuntu's systemd-oomd ends a whole cgroup when memory runs out, and a child starts in its parent's:
+    LeanWatch's (the app's, or the terminal's, shell included). In its own scope only the model is ended,
+    and the bubble can say why. Best effort: without systemd or D-Bus nothing changes.
+    """
+    if not pid or not sys.platform.startswith("linux") or os.environ.get("LEANWATCH_MODEL_SCOPE", "1") == "0":
+        return
+    try:
+        from jeepney import DBusAddress, new_method_call
+        from jeepney.io.blocking import open_dbus_connection
+
+        conn = open_dbus_connection(bus="SESSION")
+    except Exception:
+        return
+    try:
+        manager = DBusAddress("/org/freedesktop/systemd1", bus_name="org.freedesktop.systemd1",
+                              interface="org.freedesktop.systemd1.Manager")
+        props = [("PIDs", ("au", [pid])), ("Description", ("s", "LeanWatch's model")),
+                 ("CollectMode", ("s", "inactive-or-failed"))]
+        conn.send_and_get_reply(new_method_call(manager, "StartTransientUnit", "ssa(sv)a(sa(sv))",
+                                                (f"leanwatch-model-{pid}.scope", "fail", props, [])), timeout=3)
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
 
 def crash_message(exitcode: int | None, model_id: str, cpu_dtype: str = "auto") -> str:
@@ -251,6 +296,12 @@ def child_main(conn, stop_flag, loader: str, model_id: str, options: dict, log_f
         except OSError:
             pass
     signal.signal(signal.SIGINT, signal.SIG_IGN)   # Ctrl+C in the terminal is for LeanWatch, which then ends us
+    try:
+        # If memory runs out, the kernel should end the model (the big one), not the bubble.
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("500")
+    except OSError:
+        pass
     threading.Thread(target=_exit_with_parent, daemon=True, name="leanwatch-parent-watch").start()
     cpu_dtype = options.get("cpu_dtype", "auto")
     try:

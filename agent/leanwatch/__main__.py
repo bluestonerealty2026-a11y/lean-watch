@@ -82,6 +82,8 @@ def main(argv: list[str] | None = None) -> None:
     cfg.load_in_4bit = args.load_in_4bit
     cfg.device = args.device
     cfg.cpu_dtype = args.cpu_dtype
+    if cfg.cpu_dtype not in ("auto", "float32", "bfloat16"):      # argparse doesn't check a default from LEANWATCH_CPU_DTYPE
+        p.error(f"LEANWATCH_CPU_DTYPE must be auto, float32 or bfloat16 (not {cfg.cpu_dtype!r})")
     if args.coords:
         cfg.coords = args.coords
     if args.style:
@@ -216,9 +218,15 @@ def run_cli(cfg: Config, task: str) -> None:
                             speed=cfg.move_speed, takeover_px=cfg.takeover_tolerance_px,
                             confirm=hooks.confirm, stop=stop)
     try:
+        model = None
         if cfg.brain == "local":
+            from .brains import load_local_model
+
             print(f"Loading {cfg.local_model}…")
-        result = make_brain(cfg, controller, hooks, stop).run(task)
+            model = load_local_model(cfg)
+            if hasattr(model, "wait_ready"):
+                model.wait_ready(stop)       # the first screenshot must be taken after the load, not before
+        result = make_brain(cfg, controller, hooks, stop, local_model=model).run(task)
     except KeyboardInterrupt:
         stop.set()
         print("\nStopped.")

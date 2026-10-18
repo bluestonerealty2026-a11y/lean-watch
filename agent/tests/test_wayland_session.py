@@ -284,7 +284,9 @@ def cli(monkeypatch, screen, brain, *, will_ask=True, answer="y", wanted=True):
     monkeypatch.setattr(wayland, "wanted", lambda: wanted)
     monkeypatch.setattr(wayland, "will_ask", lambda state_file=None: will_ask)
     monkeypatch.setattr(wayland, "WaylandScreen", screen)
-    monkeypatch.setattr(brains, "make_brain", lambda cfg, controller, hooks, stop: brain.make(cfg, controller, hooks, stop))
+    monkeypatch.setattr(brains, "make_brain",
+                        lambda cfg, controller, hooks, stop, local_model=None: brain.make(cfg, controller, hooks, stop))
+    monkeypatch.setattr(brains, "load_local_model", lambda cfg, status=None: object())   # loaded before the first screenshot
     return main_mod
 
 

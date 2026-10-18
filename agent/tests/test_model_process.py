@@ -376,3 +376,94 @@ def test_real_tiny_qwen2_vl_answers_from_its_own_process_in_16_bit(tmp_path):
         assert len(notes) == 1 and "16-bit (bfloat16)" in notes[0]
     finally:
         model.close()
+
+
+# --------------------------------------------------------------------------- review fixes
+def test_busy_and_wait_idle_after_a_stop_that_came_too_late(models):
+    m = models(steps=40, step_s=0.02, ignore_stop=True)     # 0.8 s step that can't be cut short
+    m.stop_grace = 0.05
+    m.wait_ready()
+    stop = threading.Event()
+    threading.Timer(0.1, stop.set).start()      # Stop while the step runs
+    with pytest.raises(Stopped):
+        m.answer(ask(), shot(), stop=stop)
+    assert m.busy                       # the step is still running in the model's process
+    m.wait_idle()                       # the next task waits for it before taking its screenshot
+    assert not m.busy
+    t = time.monotonic()
+    assert "task='fresh'" in m.answer(ask("fresh"), shot()).text
+    assert time.monotonic() - t < 2.5   # only its own step, nothing left over
+
+
+def test_a_crash_report_that_fails_still_ends_the_wait(models, monkeypatch):
+    import leanwatch.model_process as mp
+
+    def broken(*a, **k):
+        raise ValueError("cannot explain")
+
+    monkeypatch.setattr(mp, "crash_message", broken)
+    m = models(die_on_answer=True)
+    m.wait_ready()
+    with pytest.raises(ModelError, match="ended unexpectedly"):
+        m.answer(ask(), shot())          # used to hang forever: the reader thread died without saying so
+    assert m.failed
+
+
+def test_own_scope_asks_systemd_for_a_scope(monkeypatch):
+    import jeepney.io.blocking as blocking
+
+    import leanwatch.model_process as mp
+
+    sent = []
+
+    class Conn:
+        def send_and_get_reply(self, msg, timeout=None):
+            sent.append(msg)
+
+        def close(self):
+            sent.append("closed")
+
+    monkeypatch.setenv("LEANWATCH_MODEL_SCOPE", "1")
+    monkeypatch.setattr(blocking, "open_dbus_connection", lambda bus="SESSION": Conn())
+    mp.own_scope(4242)
+    msg = sent[0]
+    assert msg.header.fields[3] == "StartTransientUnit"                  # HeaderFields.member
+    name, mode, props, aux = msg.body
+    assert name == "leanwatch-model-4242.scope" and mode == "fail"
+    assert ("PIDs", ("au", [4242])) in props
+    assert sent[-1] == "closed"
+
+
+def test_own_scope_without_systemd_does_nothing(monkeypatch):
+    import jeepney.io.blocking as blocking
+
+    import leanwatch.model_process as mp
+
+    def no_bus(bus="SESSION"):
+        raise OSError("no session bus")
+
+    monkeypatch.setenv("LEANWATCH_MODEL_SCOPE", "1")
+    monkeypatch.setattr(blocking, "open_dbus_connection", no_bus)
+    mp.own_scope(4242)                   # best effort: no error
+
+
+def test_bad_cpu_dtype_from_the_environment_is_refused(monkeypatch, capsys):
+    from leanwatch.__main__ import main
+
+    monkeypatch.setenv("LEANWATCH_CPU_DTYPE", "fp16")
+    with pytest.raises(SystemExit) as e:
+        main(["--check"])
+    assert e.value.code == 2 and "LEANWATCH_CPU_DTYPE" in capsys.readouterr().err
+
+
+def test_quitting_does_not_wait_for_an_in_process_load(monkeypatch):
+    from leanwatch.server import Session
+
+    s = Session(Config(), "token")
+    s._model_lock.acquire()              # a load holds the lock (LEANWATCH_MODEL_PROCESS=0)
+    try:
+        t = time.monotonic()
+        s.shutdown()
+        assert time.monotonic() - t < 2
+    finally:
+        s._model_lock.release()

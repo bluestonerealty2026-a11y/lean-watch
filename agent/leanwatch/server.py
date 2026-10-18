@@ -230,6 +230,10 @@ class Session(Hooks):
             )
             self.preview()
             model = self.ensure_model(self.stop_event) if self.cfg.brain == "local" else None
+            if getattr(model, "busy", False):
+                # Stop came while the model was reading a screenshot; it finishes that step first, then is free.
+                self.narrate("Finishing the step I was on when you pressed Stop…", "thinking")
+                model.wait_idle(self.stop_event)
             brain = make_brain(self.cfg, self.controller, self, self.stop_event, local_model=model)
             result = brain.run(text)
         except Stopped:                      # Stop while the model was still loading
@@ -281,8 +285,15 @@ class Session(Hooks):
     def shutdown(self) -> None:
         """Stop any task and end the model's process (LeanWatch is quitting)."""
         self.stop()
-        with self._model_lock:
-            model, self.local_model = self.local_model, None
+        # Don't wait for the lock: with LEANWATCH_MODEL_PROCESS=0 a load holds it for minutes, and there is
+        # nothing to close yet then (the process ending stops that load).
+        if self._model_lock.acquire(timeout=0.5):
+            try:
+                model, self.local_model = self.local_model, None
+            finally:
+                self._model_lock.release()
+        else:
+            model = None
         close = getattr(model, "close", None)
         if close is not None:
             close()

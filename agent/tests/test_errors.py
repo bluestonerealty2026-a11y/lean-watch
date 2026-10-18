@@ -156,9 +156,15 @@ def test_details_go_to_the_log_file_when_started_at_login(tmp_path, monkeypatch)
 
 def test_clean_environment_command(monkeypatch):
     monkeypatch.setenv("CONDA_PREFIX", "/home/me/anaconda3")
+    monkeypatch.setattr(errors.sys, "platform", "linux")
+    monkeypatch.setattr(errors.os.path, "exists", lambda p: p == "/proc/driver/nvidia")      # an NVIDIA machine
     cmd = errors.clean_env_command()
-    assert cmd.startswith("conda create -n leanwatch python=3.11 -y && conda activate leanwatch && pip install -r ")
+    # Python 3.12: packages from "pip install --user" for 3.11 (~/.local/lib/python3.11) can't leak in.
+    assert cmd.startswith("conda create -n leanwatch python=3.12 -y && conda activate leanwatch && pip install -r ")
     assert cmd.endswith("requirements.txt")
+    monkeypatch.setattr(errors.os.path, "exists", lambda p: False)                         # CPU only
+    assert "pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install -r " \
+        in errors.clean_env_command()
     monkeypatch.delenv("CONDA_PREFIX")
     monkeypatch.setattr(errors, "in_conda", lambda: False)
     monkeypatch.setattr(errors.os, "name", "posix")

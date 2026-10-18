@@ -79,7 +79,8 @@ def test_a_hang(monkeypatch):
 
 
 def report(monkeypatch, capsys, ram, free=None, libraries=ALL_OK):
-    monkeypatch.setattr(doctor, "check_ai_libraries", lambda: libraries)
+    monkeypatch.setattr(doctor, "check_ai_libraries", lambda timeout=None, no_user_site=False: libraries)
+    monkeypatch.setattr(doctor, "user_site_packages", lambda: None)
     monkeypatch.setattr(doctor, "_ram_gb", lambda: ram)
     monkeypatch.setattr(doctor, "_available_gb", lambda: free)
     code = doctor.report(Config())
@@ -130,3 +131,38 @@ def test_requirements_name_what_the_check_needs(dist):
     from leanwatch.errors import REQUIREMENTS
 
     assert any(line.startswith(dist) for line in REQUIREMENTS.read_text().splitlines())
+
+
+def test_check_retries_without_the_user_site_packages(monkeypatch, capsys, tmp_path):
+    """A stray package in ~/.local (pip install --user) breaks accelerate: --check says so and how to start."""
+    import leanwatch.doctor as doctor
+    from leanwatch.config import Config
+
+    calls = []
+
+    def check(timeout=None, no_user_site=False):
+        calls.append(no_user_site)
+        if no_user_site:
+            return dict(ALL_OK)
+        return dict(ALL_OK, accelerate=broken("ImportError", "cannot import name 'dispatch_model' from partially "
+                                              "initialized module 'accelerate.big_modeling'"))
+
+    (tmp_path / "stray").mkdir()
+    monkeypatch.setattr(doctor, "check_ai_libraries", check)
+    monkeypatch.setattr(doctor, "user_site_packages", lambda: str(tmp_path))
+    doctor.report(Config())
+    out = capsys.readouterr().out
+    assert calls == [False, True]
+    assert f"FIX  Without the packages in {tmp_path} the AI libraries import fine" in out
+    assert "PYTHONNOUSERSITE=1 python -m leanwatch" in out
+
+
+def test_no_retry_when_the_libraries_import_or_there_is_no_user_site(monkeypatch, capsys):
+    import leanwatch.doctor as doctor
+    from leanwatch.config import Config
+
+    calls = []
+    monkeypatch.setattr(doctor, "check_ai_libraries", lambda timeout=None, no_user_site=False: calls.append(no_user_site) or dict(ALL_OK))
+    monkeypatch.setattr(doctor, "user_site_packages", lambda: "/home/x/.local/lib/python3.11/site-packages")
+    doctor.report(Config())
+    assert calls == [False]

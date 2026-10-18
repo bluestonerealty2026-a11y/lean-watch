@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from pathlib import Path
 
 from .config import Config
 from .memory import MODELS, SMALL_MODEL, available_gb as _available_gb, need_gb, ram_gb as _ram_gb
@@ -69,8 +70,9 @@ print("LEANWATCH-CHECK " + json.dumps(out), flush=True)
 '''
 
 
-def check_ai_libraries(timeout: float = AI_CHECK_TIMEOUT_S) -> dict:
+def check_ai_libraries(timeout: float = AI_CHECK_TIMEOUT_S, no_user_site: bool = False) -> dict:
     """Import torch, torchvision, accelerate and transformers in a fresh Python (this one), as the model does.
+    no_user_site: without the packages in ~/.local (python -s).
 
     Returns {"torch": {"ok": True, "version": "2.5.1"}, ..., "gpu": {...}}, or {"error": ..., "traceback": [...]}
     when that Python crashed or hung.
@@ -80,8 +82,8 @@ def check_ai_libraries(timeout: float = AI_CHECK_TIMEOUT_S) -> dict:
     import subprocess
 
     try:
-        done = subprocess.run([sys.executable, "-c", AI_CHECK], capture_output=True, text=True, errors="replace",
-                              timeout=timeout)
+        done = subprocess.run([sys.executable, *(["-s"] if no_user_site else []), "-c", AI_CHECK],
+                              capture_output=True, text=True, errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"error": f"Importing the AI libraries took more than {timeout / 60:.0f} minutes, so I gave up."}
     except OSError as err:
@@ -96,6 +98,21 @@ def check_ai_libraries(timeout: float = AI_CHECK_TIMEOUT_S) -> dict:
         how = f"crashed (signal {-code})"
     return {"error": f"Python {how} while importing the AI libraries.",
             "traceback": done.stderr.strip().splitlines()[-8:]}
+
+
+def ai_libraries_ok(result: dict) -> bool:
+    return "error" not in result and all(r.get("ok") for name, r in result.items() if name != "gpu")
+
+
+def user_site_packages() -> str | None:
+    """~/.local/lib/pythonX.Y/site-packages, if this Python mixes packages from there in (pip install --user)."""
+    import site
+
+    path = site.getusersitepackages() if site.ENABLE_USER_SITE else None
+    try:
+        return path if path and any(Path(path).iterdir()) else None
+    except OSError:
+        return None
 
 
 def ai_library_lines(result: dict) -> list[tuple[bool | None, str, list[str]]]:
@@ -252,6 +269,18 @@ def report(cfg: Config) -> int:
         line(good, text.replace("\n", "\n" + " " * 7))
         for d in details:
             print(f"         {d}")
+    user_site = user_site_packages()
+    if not ai_libraries_ok(libraries) and user_site:
+        # Packages installed with "pip install --user" are mixed into every Python of this version and are a
+        # common cause: try once without them.
+        print(f"  Trying again without the packages in {user_site}...", flush=True)
+        if ai_libraries_ok(check_ai_libraries(no_user_site=True)):
+            line(False, f"Without the packages in {user_site} the AI libraries import fine, so one of those breaks "
+                        "them. Start LeanWatch like this:\n"
+                        "         PYTHONNOUSERSITE=1 python -m leanwatch\n"
+                        "       or find and remove the package that clashes (pip list --user shows them).")
+        else:
+            line(None, f"It fails without the packages in {user_site} too, so they are not the cause.")
     gpu = libraries.get("gpu") or {}
     kind, vram = gpu.get("kind"), gpu.get("memory_gb")
     ram, free = _ram_gb(), _available_gb()

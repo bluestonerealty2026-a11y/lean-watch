@@ -35,7 +35,9 @@ On Ubuntu/Debian, Qt also needs one system library: `sudo apt install libxcb-cur
 **If something goes wrong**, run `python -m leanwatch --check`: it imports the AI libraries the way the model does and names the real error and its fix. A mixed-up Python install (common in an Anaconda base environment) is most reliably fixed with a clean environment:
 
 ```bash
-conda create -n leanwatch python=3.11 -y && conda activate leanwatch && pip install -r requirements.txt
+conda create -n leanwatch python=3.12 -y && conda activate leanwatch
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # no NVIDIA GPU: the small CPU build
+pip install -r requirements.txt
 ```
 
 1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac; on Linux with Wayland, run `python -m leanwatch --shortcut on` once first).
