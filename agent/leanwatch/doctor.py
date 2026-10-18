@@ -45,8 +45,13 @@ def check_transformers():
     return transformers.__version__
 
 out = {}
+needs = {"torchvision": ["torch"], "accelerate": ["torch"], "transformers": ["torch", "accelerate"]}
 for name, check in (("torch", check_torch), ("torchvision", check_torchvision),
                     ("accelerate", check_accelerate), ("transformers", check_transformers)):
+    broken = [d for d in needs.get(name, []) if not out.get(d, {}).get("ok")]
+    if broken:                  # its error would only repeat (or garble) the first one
+        out[name] = {"ok": False, "skipped": broken[0]}
+        continue
     before = set(sys.modules)
     try:
         out[name] = {"ok": True, "version": check()}
@@ -128,6 +133,9 @@ def ai_library_lines(result: dict) -> list[tuple[bool | None, str, list[str]]]:
     reasons: dict = {}
     for name, r in libraries.items():
         if r.get("ok"):
+            continue
+        if r.get("skipped"):
+            lines.append((None, f"{name} not checked: it needs {r['skipped']}, which doesn't import.", []))
             continue
         reason = (r["root_type"], r["root_message"])
         if reason in reasons:

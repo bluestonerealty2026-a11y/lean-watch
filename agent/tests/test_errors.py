@@ -159,8 +159,9 @@ def test_clean_environment_command(monkeypatch):
     monkeypatch.setattr(errors.sys, "platform", "linux")
     monkeypatch.setattr(errors.os.path, "exists", lambda p: p == "/proc/driver/nvidia")      # an NVIDIA machine
     cmd = errors.clean_env_command()
-    # Python 3.12: packages from "pip install --user" for 3.11 (~/.local/lib/python3.11) can't leak in.
-    assert cmd.startswith("conda create -n leanwatch python=3.12 -y && conda activate leanwatch && pip install -r ")
+    # Packages from "pip install --user" (~/.local) are kept out of the new environment.
+    assert cmd.startswith("conda create -n leanwatch python=3.12 -y && conda activate leanwatch && "
+                          "conda env config vars set PYTHONNOUSERSITE=1 && conda activate leanwatch && pip install -r ")
     assert cmd.endswith("requirements.txt")
     monkeypatch.setattr(errors.os.path, "exists", lambda p: False)                         # CPU only
     assert "pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install -r " \
@@ -169,3 +170,23 @@ def test_clean_environment_command(monkeypatch):
     monkeypatch.setattr(errors, "in_conda", lambda: False)
     monkeypatch.setattr(errors.os, "name", "posix")
     assert "-m venv" in errors.clean_env_command()
+
+
+def test_old_pyopenssl_behind_accelerate():
+    """Seen on a real Anaconda base: accelerate -> boto3 -> urllib3.contrib.pyopenssl -> an old pyOpenSSL."""
+    try:
+        try:
+            raise AttributeError("module 'lib' has no attribute 'GEN_EMAIL'")
+        except AttributeError as err:
+            raise ModuleNotFoundError("Could not import module 'AutoModelForImageTextToText'. "
+                                      "Are this object's requirements defined correctly?") from err
+    except ModuleNotFoundError as e:
+        text = errors.explain_load_error(e, "org/fake-2B")
+    assert "AttributeError: module 'lib' has no attribute 'GEN_EMAIL'" in text
+    assert "pip install --upgrade pyopenssl" in text
+
+
+def test_pyo3_reinit_is_explained_as_a_follow_on_error():
+    fix, install = errors.known_fix("ImportError", "PyO3 modules compiled for CPython 3.8 or older may only be "
+                                                   "initialized once per interpreter process")
+    assert "earlier failed import" in fix and install

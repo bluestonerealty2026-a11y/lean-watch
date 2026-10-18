@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import site
 import sys
 from pathlib import Path
 
@@ -30,6 +31,13 @@ def gui_python(executable: str = sys.executable, platform: str = sys.platform) -
         if w.exists():
             return str(w)
     return executable
+
+
+def python_flags() -> list[str]:
+    """Keep -s when this Python ignores ~/.local (python -s or PYTHONNOUSERSITE=1, e.g. set with
+    `conda env config vars`): login starts Python directly, without the terminal's environment, and packages
+    there can break the AI libraries."""
+    return ["-s"] if site.ENABLE_USER_SITE is False else []
 
 
 def launcher_source(args: list[str], agent_dir: Path = AGENT_DIR) -> str:
@@ -57,10 +65,11 @@ def desktop_quote(arg: str) -> str:
 
 class Autostart:
     def __init__(self, home: Path | None = None, platform: str = sys.platform, executable: str = sys.executable,
-                 winreg=None):
+                 winreg=None, flags: list[str] | None = None):
         self.home = home or Path.home()
         self.platform = platform
         self.executable = executable
+        self.flags = python_flags() if flags is None else list(flags)
         self._winreg = winreg
 
     # where things go
@@ -90,7 +99,7 @@ class Autostart:
         self.launcher.write_text(launcher_source(args), encoding="utf-8")   # Python reads source as UTF-8
         python = gui_python(self.executable, self.platform)
         if self.platform == "win32":
-            command = f'"{python}" "{self.launcher}"'
+            command = " ".join([f'"{python}"', *self.flags, f'"{self.launcher}"'])
             if len(command) > 260:
                 raise RuntimeError("Windows limits start-up commands to 260 characters, and this one is longer: "
                                    "install Python (or LeanWatch's virtual environment) in a shorter folder.")
@@ -108,7 +117,7 @@ class Autostart:
             log = str(self.home / ".leanwatch" / "leanwatch.log")
             entry.write_bytes(plistlib.dumps({
                 "Label": LABEL,
-                "ProgramArguments": [python, str(self.launcher)],
+                "ProgramArguments": [python, *self.flags, str(self.launcher)],
                 "WorkingDirectory": str(self.launcher.parent),
                 "RunAtLoad": True,
                 "KeepAlive": {"SuccessfulExit": False},      # restart after a crash, not after Quit
@@ -121,18 +130,19 @@ class Autostart:
             return (f"LeanWatch will start when you log in to your Mac ({entry}). macOS asks for permissions again for "
                     "the Python it starts at login: allow 'Python' under System Settings > Privacy & Security > "
                     "Accessibility and Screen Recording.")
+        argv = [python, *self.flags, str(self.launcher)]
         entry.write_text(encoding="utf-8", data=
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=LeanWatch\n"
             "Comment=Floating helper that shows you how to do things on your computer\n"
-            f"Exec={desktop_quote(python)} {desktop_quote(str(self.launcher))}\n"
+            f"Exec={' '.join(desktop_quote(a) for a in argv)}\n"
             "Terminal=false\n"
             "X-GNOME-Autostart-enabled=true\n"
             "X-GNOME-Autostart-Delay=5\n"
         )
         return (f"LeanWatch will start when you log in ({entry}). If your window manager doesn't run autostart "
-                f"entries (i3, sway, bspwm, ...), add this to its config instead: {python} {self.launcher}")
+                f"entries (i3, sway, bspwm, ...), add this to its config instead: {' '.join(argv)}")
 
     def remove(self) -> str:
         removed = False

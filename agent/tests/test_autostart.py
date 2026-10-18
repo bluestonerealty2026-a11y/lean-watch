@@ -6,11 +6,18 @@ from contextlib import contextmanager
 import pytest
 
 from leanwatch.__main__ import main, strip_option
-from leanwatch.autostart import RUN_KEY, Autostart, desktop_quote, gui_python, launcher_source
+from leanwatch import autostart as auto_mod
+from leanwatch.autostart import RUN_KEY, Autostart, desktop_quote, gui_python, launcher_source, python_flags
 from leanwatch.config import Config
 from leanwatch.controller import Controller, DryRunBackend
 from leanwatch.permissions import Permissions
 from leanwatch.screen import Geometry
+
+
+@pytest.fixture(autouse=True)
+def user_site_on(monkeypatch):
+    """The expected commands below assume a Python that reads ~/.local, whatever runs the tests."""
+    monkeypatch.setattr(auto_mod.site, "ENABLE_USER_SITE", True)
 
 
 def test_linux_desktop_entry(tmp_path):
@@ -82,6 +89,29 @@ def test_windows_run_key_uses_pythonw(tmp_path):
     assert a.is_installed()
     a.remove()
     assert not a.is_installed() and not (tmp_path / ".leanwatch" / "start_leanwatch.pyw").exists()
+
+
+def test_python_without_user_site_keeps_it_off_at_login(tmp_path, monkeypatch):
+    """`PYTHONNOUSERSITE=1` (conda env config vars) is gone when the desktop starts Python at login: keep -s."""
+    monkeypatch.setattr(auto_mod.site, "ENABLE_USER_SITE", False)
+    assert python_flags() == ["-s"]
+    launcher = str(tmp_path / ".leanwatch" / "start_leanwatch.py")
+    Autostart(home=tmp_path, platform="linux", executable="/env/bin/python").install([])
+    text = (tmp_path / ".config" / "autostart" / "leanwatch.desktop").read_text()
+    assert f'Exec="/env/bin/python" "-s" "{launcher}"' in text
+    Autostart(home=tmp_path, platform="darwin", executable="/env/bin/python").install([])
+    plist = plistlib.loads((tmp_path / "Library" / "LaunchAgents" / "io.leanwatch.bubble.plist").read_bytes())
+    assert plist["ProgramArguments"] == ["/env/bin/python", "-s", launcher]
+    reg = FakeWinreg()
+    Autostart(home=tmp_path, platform="win32", executable="C:\\py\\python.exe", winreg=reg).install([])
+    assert reg.values[(("HKCU", RUN_KEY), "LeanWatch")] == (
+        f'"C:\\py\\python.exe" -s "{tmp_path / ".leanwatch" / "start_leanwatch.pyw"}"')
+
+
+def test_user_site_disabled_for_safety_is_not_copied(monkeypatch):
+    monkeypatch.setattr(auto_mod.site, "ENABLE_USER_SITE", None)    # setuid: Python decides again at login
+    assert python_flags() == []
+    assert Autostart(platform="linux", flags=["-s"]).flags == ["-s"]
 
 
 def test_helpers():

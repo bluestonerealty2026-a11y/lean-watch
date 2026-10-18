@@ -166,3 +166,33 @@ def test_no_retry_when_the_libraries_import_or_there_is_no_user_site(monkeypatch
     monkeypatch.setattr(doctor, "user_site_packages", lambda: "/home/x/.local/lib/python3.11/site-packages")
     doctor.report(Config())
     assert calls == [False]
+
+
+def test_a_library_whose_dependency_failed_is_not_checked():
+    from leanwatch.doctor import ai_library_lines
+
+    libs = dict(ALL_OK, accelerate=broken("AttributeError", "module 'lib' has no attribute 'GEN_EMAIL'"),
+                transformers={"ok": False, "skipped": "accelerate"})
+    lines = ai_library_lines(libs)
+    texts = [t for _, t, _ in lines]
+    assert any("pip install --upgrade pyopenssl" in t for t in texts)
+    assert (None, "transformers not checked: it needs accelerate, which doesn't import.", []) in lines
+
+
+def test_the_check_script_skips_dependents_for_real(tmp_path):
+    """Run the real check script with a fake accelerate that fails like the one on that laptop."""
+    import json
+    import subprocess
+    import sys
+
+    from leanwatch.doctor import AI_CHECK, AI_CHECK_MARK
+
+    fake = tmp_path / "accelerate"
+    fake.mkdir()
+    (fake / "__init__.py").write_text("raise AttributeError(\"module 'lib' has no attribute 'GEN_EMAIL'\")\n")
+    out = subprocess.run([sys.executable, "-c", AI_CHECK], capture_output=True, text=True, timeout=300,
+                         env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)})
+    line = [s for s in out.stdout.splitlines() if s.startswith(AI_CHECK_MARK)][-1]
+    result = json.loads(line[len(AI_CHECK_MARK):])
+    assert result["accelerate"]["root_message"] == "module 'lib' has no attribute 'GEN_EMAIL'"
+    assert result["transformers"] == {"ok": False, "skipped": "accelerate"}

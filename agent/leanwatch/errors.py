@@ -105,8 +105,10 @@ def clean_env_command() -> str:
     cpu = ("pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && "
            if sys.platform.startswith("linux") and not os.path.exists("/proc/driver/nvidia") else "")
     if in_conda():
-        # Python 3.12: packages in ~/.local/lib/python3.11 (pip install --user) can't leak into it.
-        return f"conda create -n leanwatch python=3.12 -y && conda activate leanwatch && {cpu}pip install -r {req}"
+        # PYTHONNOUSERSITE: packages from "pip install --user" (~/.local) stay out of it.
+        return ("conda create -n leanwatch python=3.12 -y && conda activate leanwatch && "
+                "conda env config vars set PYTHONNOUSERSITE=1 && conda activate leanwatch && "
+                f"{cpu}pip install -r {req}")
     if os.name == "nt":
         return f"py -m venv %USERPROFILE%\\leanwatch-env && %USERPROFILE%\\leanwatch-env\\Scripts\\pip install -r {req}"
     return f"python3 -m venv ~/leanwatch-env && ~/leanwatch-env/bin/pip install -r {req}"
@@ -180,6 +182,14 @@ def known_fix(kind: str, message: str, model_id: str | None = None, cpu_dtype: s
         fix = 'pip install "numpy<2"' if np_v.split(".")[0].isdigit() and int(np_v.split(".")[0]) >= 2 \
             else "pip install --upgrade numpy"
         return f"A package here was built for a different NumPy (NumPy {np_v} is installed). Fix: {fix}", True
+    if re.search(r"module 'lib' has no attribute '\w+'", text):
+        # pyOpenSSL older than the cryptography package it runs on. accelerate reaches it through boto3
+        # (when boto3 is installed), so a broken pyOpenSSL stops the model from loading.
+        return ("pyOpenSSL is too old for the installed cryptography package (accelerate loads it through boto3). "
+                "Fix: pip install --upgrade pyopenssl"), True
+    if "may only be initialized once per interpreter process" in text:
+        return ("This follows an earlier failed import in the same program (see the first error above): "
+                "fix that one and restart LeanWatch."), True
     if "partially initialized module" in text or "circular import" in text:
         return ("A package was left half-loaded by an earlier failed try, or it is installed badly. "
                 "Restart LeanWatch; if this comes back, run: python -m leanwatch --check"), True

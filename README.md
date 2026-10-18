@@ -36,9 +36,12 @@ On Ubuntu/Debian, Qt also needs one system library: `sudo apt install libxcb-cur
 
 ```bash
 conda create -n leanwatch python=3.12 -y && conda activate leanwatch
+conda env config vars set PYTHONNOUSERSITE=1 && conda activate leanwatch   # ignore packages in ~/.local
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # no NVIDIA GPU: the small CPU build
 pip install -r requirements.txt
 ```
+
+Run `--autostart on` again from the new environment: the login entry starts the Python that ran it (and keeps ignoring `~/.local`).
 
 1. Click the bubble, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> on a Mac; on Linux with Wayland, run `python -m leanwatch --shortcut on` once first).
 2. Type what you need and press <kbd>Enter</kbd> or **Go**.
