@@ -356,3 +356,14 @@ def test_auto_coordinates_use_what_the_model_reports():
     assert brain.run("x").ok
     click = [e for e in backend.log if e[0] == "click"][0]
     assert abs(click[2][0] - 960) <= 3 and abs(click[2][1] - 540) <= 3     # the centre of the screen
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("Quit LeanWatch", "leanwatch"), ("close lean watch", "leanwatch"), ("please exit LeanWatch.", "leanwatch"),
+    ("QUIT", "unclear"), ("quit", "unclear"), ("Exit.", "unclear"), ("close", "unclear"), ("bye!", "unclear"),
+    ("quit chrome", None), ("Quit Chrome", None), ("close the window", None), ("exit full screen", None),
+])
+def test_quit_request(text, kind):
+    from leanwatch.risk import quit_request
+
+    assert quit_request(text) == kind

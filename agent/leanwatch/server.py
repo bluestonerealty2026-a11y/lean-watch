@@ -29,6 +29,7 @@ from .hooks import Hooks, RunResult
 from .config import Config
 from .controller import Controller, DryRunBackend, PyAutoGuiBackend
 from .permissions import Permissions
+from .risk import QUIT_HINT, quit_request
 from .screen import Geometry, ScreenCapture, jpeg_data_url
 
 MAX_TASK_CHARS = 2000
@@ -169,6 +170,8 @@ class Session(Hooks):
         text = text.strip()
         if not text:
             return {"type": "error", "message": "Type what you would like me to do."}
+        if quit_request(text):
+            return {"type": "error", "message": QUIT_HINT}
         if len(text) > MAX_TASK_CHARS:
             return {"type": "error", "message": "That request is too long. Keep it under 2000 characters."}
         if not self.permissions.granted:

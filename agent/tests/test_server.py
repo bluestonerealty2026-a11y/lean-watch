@@ -62,6 +62,8 @@ def test_commands_wait_for_permission():
         st = await (await client.get("/api/status", headers=h)).json()
         assert st["permission"] == {"granted": True, "mouse": True, "keyboard": False}
         assert (await client.post("/api/command", json={"text": "   "}, headers=h)).status == 409
+        r = await client.post("/api/command", json={"text": "quit"}, headers=h)   # LeanWatch itself, not a task
+        assert r.status == 409 and "right-click the bubble > Quit" in (await r.json())["message"]
     run(go)
 
 

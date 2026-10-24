@@ -87,3 +87,20 @@ def risky_intent(thought: str) -> str | None:
 
 def language_checked(language: str) -> bool:
     return (language or "english").strip().lower() in CHECKED_LANGUAGES
+
+
+QUIT_WHAT = ("Quit what? To close an app, say which one, e.g. “quit Chrome”. To quit LeanWatch itself, type "
+             "“quit LeanWatch”, or right-click the bubble > Quit.")
+QUIT_HINT = ("To quit LeanWatch, right-click the bubble > Quit (or press Ctrl+C in its terminal). To close an app, "
+             "say which one, e.g. “quit Chrome”.")
+
+
+def quit_request(text: str) -> str | None:
+    """"leanwatch" for “quit LeanWatch”; "unclear" for a bare “quit”, “exit” or “close” (which app? Often Enter
+    went before the app's name: a model given “QUIT” clicks around trying to do something); else None."""
+    t = re.sub(r"^please\s+", "", re.sub(r"[\s.!?]+$", "", text.strip().lower()))
+    if re.fullmatch(r"(quit|exit|close|stop)\s+lean\s?watch", t):
+        return "leanwatch"
+    if re.fullmatch(r"quit|exit|close|stop|bye|goodbye", t):
+        return "unclear"
+    return None

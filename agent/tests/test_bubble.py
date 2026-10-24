@@ -212,6 +212,34 @@ def test_first_command_asks_permission_then_runs(qapp):
     close(app)
 
 
+@pytest.mark.parametrize("granted", [False, True])
+def test_a_bare_quit_asks_which_app_and_keeps_the_word(qapp, monkeypatch, granted):
+    """Seen for real: “QUIT” sent by mistake before “chrome”. Nothing runs, nothing quits."""
+    import leanwatch.bubble as bubble_module
+
+    quits = []
+    monkeypatch.setattr(bubble_module.QApplication, "quit", lambda: quits.append(1))
+    app, session, _ = make(qapp, granted=granted)
+    app.expand()
+    app.panel.input.setText("QUIT")
+    app.panel._go()
+    assert quits == [] and session.sent == [] and not app.panel.consent.isVisible()
+    assert "Quit what?" in app.panel.notice.text() and app.panel.input.text() == "QUIT "
+    close(app)
+
+
+def test_quit_leanwatch_closes_it(qapp, monkeypatch):
+    import leanwatch.bubble as bubble_module
+
+    quits = []
+    monkeypatch.setattr(bubble_module.QApplication, "quit", lambda: quits.append(1))
+    app, session, _ = make(qapp, granted=True)
+    app.expand()
+    app.submit("Quit LeanWatch")
+    assert quits == [1] and session.sent == []
+    close(app)
+
+
 def test_saying_no_to_permission_runs_nothing(qapp):
     app, session, _ = make(qapp)
     app.expand()

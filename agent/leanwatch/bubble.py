@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QToolButton, QVBoxLayout, QWidget,
 )
 
+from .risk import QUIT_WHAT, quit_request
+
 # Colours from the design: teal button, near-black box, dark field with a teal outline.
 TEAL = "#3BBFB3"
 TEAL_HOVER = "#55D2C6"
@@ -963,6 +965,16 @@ class BubbleApp(QObject):
     # ---------------- commands ----------------
     def submit(self, text: str) -> None:
         if self.running:
+            return
+        asked = quit_request(text)
+        if asked == "leanwatch":          # the same as right-click > Quit
+            QApplication.quit()
+            return
+        if asked:                         # a bare “quit”: keep it in the box, to finish with the app's name
+            self.panel.set_notice(QUIT_WHAT)
+            self.panel.input.setText(text.strip() + " ")
+            self.panel.input.setFocus()
+            self.panel.refit()
             return
         if not self.session.permissions.granted:
             self.pending_text = text
