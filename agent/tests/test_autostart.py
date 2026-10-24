@@ -169,6 +169,7 @@ def test_launcher_is_utf8_and_paths_are_absolute(tmp_path, monkeypatch):
     home = tmp_path / "José Ñúñez"
     run = home / "runs" / "my-model"
     run.mkdir(parents=True)
+    (run / "adapter_config.json").write_text('{"base_model_name_or_path": "some/base"}')
     monkeypatch.chdir(home)
     monkeypatch.setattr(auto, "Autostart", lambda: Autostart(home=home, platform="linux"))
     main(["--autostart", "on", "--adapter", "runs/my-model", "--language", "Español"])

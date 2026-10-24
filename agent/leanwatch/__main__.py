@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import threading
+from pathlib import Path
 
 from .config import Config
 from .memory import SMALL_MODEL
@@ -66,7 +67,13 @@ def main(argv: list[str] | None = None) -> None:
             cfg.local_model = args.model
     cfg.adapter = args.adapter
     if cfg.brain == "local":
-        from .brains import resolve_model_id, trained_settings
+        from .brains import adapter_problem, resolve_model_id, trained_settings
+
+        if cfg.adapter:
+            problem = adapter_problem(cfg.adapter)
+            if problem:
+                p.error(problem)
+            cfg.adapter = str(Path(cfg.adapter).expanduser())
 
         # Which model: --model, else LEANWATCH_LOCAL_MODEL, else the adapter's base model, else the default.
         if cfg.adapter and not args.model and not os.environ.get("LEANWATCH_LOCAL_MODEL"):

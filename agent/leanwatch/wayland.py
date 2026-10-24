@@ -223,6 +223,13 @@ class PortalBus:
         return results
 
 
+def _described(answer: dict) -> str:
+    """What a Start answer gave, for the terminal (never the token itself)."""
+    devices = int(answer.get("devices", 0) or 0)
+    return (f"mouse {'yes' if devices & POINTER else 'no'}, keyboard {'yes' if devices & KEYBOARD else 'no'}, "
+            f"{len(answer.get('streams') or [])} screen(s), fields {sorted(answer)}")
+
+
 class RemoteDesktop:
     """One remote desktop session with a screen-cast stream: pointer, keyboard and the screen's frames."""
 
@@ -253,43 +260,16 @@ class RemoteDesktop:
     def start(self, stop: threading.Event | None = None, ask_timeout: float = 300.0, asking=None) -> None:
         """Open the session. The first time (or after the person withdrew it) the desktop asks; `asking`
         is called if its dialog is up, so LeanWatch can say what to do in it."""
-        b = self.bus
-        r = b.request(RD, "CreateSession", "a{sv}", (), {"session_handle_token": ("s", b.token())})
-        self.session = r["session_handle"]
-        self._watch_closed()
-        try:
-            wanted = KEYBOARD | POINTER
-            try:
-                wanted &= int(b.get_property(RD, "AvailableDeviceTypes")) or wanted
-            except Exception:
-                pass
-            options = {"types": ("u", wanted), "persist_mode": ("u", 2)}
-            token = self._load_token()
-            if token:
-                options["restore_token"] = ("s", token)
-            b.request(RD, "SelectDevices", "oa{sv}", (self.session,), options)
-            cursor = CURSOR_HIDDEN
-            try:
-                modes = int(b.get_property(SC, "AvailableCursorModes"))
-                cursor = CURSOR_HIDDEN if modes & CURSOR_HIDDEN else CURSOR_EMBEDDED if modes & CURSOR_EMBEDDED else 0
-            except Exception:
-                pass
-            sources = {"types": ("u", MONITOR), "multiple": ("b", False)}
-            if cursor:
-                sources["cursor_mode"] = ("u", cursor)
-            b.request(SC, "SelectSources", "oa{sv}", (self.session,), sources)
-            # This is when the desktop shows its dialog (the first time): wait for the person.
-            try:
-                r = b.request(RD, "Start", "osa{sv}", (self.session, ""), {}, stop=stop, timeout=ask_timeout,
-                              waiting=asking)
-            except PortalDenied as err:
-                if stop is not None and stop.is_set():
-                    raise
-                raise PortalDenied("I can only help after your desktop lets me see the screen and use the mouse. "
-                                   "Try again and click Share, with “Allow Remote Interaction” turned on.") from err
-        except BaseException:
+        token = self._load_token()
+        r = self._open(token, stop, ask_timeout, asking)
+        if token and not (int(r.get("devices", 0)) & POINTER and r.get("streams")):
+            # A remembered answer can come back without the screen (or the mouse): forget it and ask again.
+            print(f"  Wayland: the desktop's remembered answer gave {_described(r)}; asking again.", file=sys.stderr,
+                  flush=True)
+            self._save_token(None)
             self.close()
-            raise
+            self.closed = threading.Event()
+            r = self._open(None, stop, ask_timeout, asking)
         self.devices = int(r.get("devices", 0))
         if not self.devices & POINTER:
             # Don't keep this answer: restoring it would never give the mouse. Ask again next time.
@@ -297,11 +277,15 @@ class RemoteDesktop:
             self.close()
             raise PortalDenied("The desktop shared the screen but not the mouse and keyboard. Next time, turn on "
                                "“Allow Remote Interaction” in the desktop's dialog before you click Share.")
-        self._save_token(r.get("restore_token"))
         streams = r.get("streams") or []
         if not streams:
+            self._save_token(None)       # restoring it would give no screen again
             self.close()
-            raise PortalError("The desktop shared no screen.")
+            print(f"  Wayland: the desktop's answer gave {_described(r)}.", file=sys.stderr, flush=True)
+            raise PortalError("The desktop shared the mouse but no screen. Try again, and in the desktop's dialog "
+                              "choose your screen before you click Share. If it happens again, send Claude the "
+                              "terminal output.")
+        self._save_token(r.get("restore_token"))   # only an answer that gave both the screen and the mouse
         node, props = streams[0]
         self.node = int(node)
         if "size" in props:
@@ -317,19 +301,59 @@ class RemoteDesktop:
             self.key(0xFFE1, False)
         time.sleep(0.15)
 
+    def _open(self, token: str | None, stop, ask_timeout: float, asking) -> dict:
+        """CreateSession, SelectDevices (restoring `token` if given), SelectSources and Start; the Start answer."""
+        b = self.bus
+        r = b.request(RD, "CreateSession", "a{sv}", (), {"session_handle_token": ("s", b.token())})
+        self.session = r["session_handle"]
+        self._watch_closed()
+        try:
+            wanted = KEYBOARD | POINTER
+            try:
+                wanted &= int(b.get_property(RD, "AvailableDeviceTypes")) or wanted
+            except Exception:
+                pass
+            options = {"types": ("u", wanted), "persist_mode": ("u", 2)}
+            if token:
+                options["restore_token"] = ("s", token)
+            b.request(RD, "SelectDevices", "oa{sv}", (self.session,), options)
+            cursor = CURSOR_HIDDEN
+            try:
+                modes = int(b.get_property(SC, "AvailableCursorModes"))
+                cursor = CURSOR_HIDDEN if modes & CURSOR_HIDDEN else CURSOR_EMBEDDED if modes & CURSOR_EMBEDDED else 0
+            except Exception:
+                pass
+            sources = {"types": ("u", MONITOR), "multiple": ("b", False)}
+            if cursor:
+                sources["cursor_mode"] = ("u", cursor)
+            b.request(SC, "SelectSources", "oa{sv}", (self.session,), sources)
+            # This is when the desktop shows its dialog (the first time): wait for the person.
+            try:
+                return b.request(RD, "Start", "osa{sv}", (self.session, ""), {}, stop=stop, timeout=ask_timeout,
+                                 waiting=asking)
+            except PortalDenied as err:
+                if stop is not None and stop.is_set():
+                    raise
+                raise PortalDenied("I can only help after your desktop lets me see the screen and use the mouse. "
+                                   "Try again and click Share, with “Allow Remote Interaction” turned on.") from err
+        except BaseException:
+            self.close()
+            raise
+
     def _watch_closed(self) -> None:
         """The desktop closes the session when the person stops sharing (or the dialog is cancelled)."""
-        self._closed_rule = self.bus.match(interface="org.freedesktop.portal.Session", member="Closed", path=self.session)
+        session, closed = self.session, self.closed
+        self._closed_rule = self.bus.match(interface="org.freedesktop.portal.Session", member="Closed", path=session)
         self._closed_filter = self.bus.router.filter(self._closed_rule)
         queue = self._closed_filter.__enter__()
 
         def wait():
-            while not self.closed.is_set():
+            while not closed.is_set():
                 try:
                     queue.get(timeout=0.5)
-                    self.closed.set()
+                    closed.set()
                 except Exception:
-                    if self.session is None:
+                    if self.session != session:      # closed by LeanWatch (or a new session took over)
                         return
 
         threading.Thread(target=wait, daemon=True, name="leanwatch-portal-closed").start()

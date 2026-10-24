@@ -612,7 +612,7 @@ class FakePortal:
         if method == "CreateSession":
             return {"session_handle": SESSION}
         if method == "Start":
-            return self.start_result
+            return self.start_result.pop(0) if isinstance(self.start_result, list) else self.start_result
         return {}
 
     def req(self, method):
@@ -762,8 +762,6 @@ def test_warm_up_without_a_keyboard_presses_no_key(isolated, fake_time):
 
 
 def test_no_pointer_clears_the_token_closes_and_explains(isolated, fake_time):
-    isolated.parent.mkdir(parents=True)
-    isolated.write_text('{"restore_token": "old-token"}')
     portal = FakePortal(start={"devices": 1, "restore_token": "screen-only", "streams": [(44, {})]})
     rd = wayland.RemoteDesktop(bus=portal, state_file=isolated)
     with pytest.raises(wayland.PortalDenied, match="Allow Remote Interaction"):
@@ -775,13 +773,59 @@ def test_no_pointer_clears_the_token_closes_and_explains(isolated, fake_time):
     assert portal.input_calls() == []                                           # no warm-up
 
 
-def test_no_stream_is_an_error(isolated, fake_time):
+def test_no_stream_is_an_error_and_its_answer_is_not_kept(isolated, fake_time, capsys):
     portal = FakePortal(start={"devices": 3, "restore_token": "t", "streams": []})
     rd = wayland.RemoteDesktop(bus=portal, state_file=isolated)
-    with pytest.raises(wayland.PortalError, match="shared no screen") as err:
+    with pytest.raises(wayland.PortalError, match="mouse but no screen.*choose your screen") as err:
         rd.start()
     assert not isinstance(err.value, wayland.PortalDenied)
     assert portal.closed_session() and rd.session is None
+    assert json.loads(isolated.read_text()) == {"restore_token": ""}            # restoring it would fail the same way
+    said = capsys.readouterr().err
+    assert "mouse yes, keyboard yes, 0 screen(s)" in said and "'t'" not in said   # what came back, never the token
+
+
+@pytest.mark.parametrize("remembered", [
+    {"devices": 3, "restore_token": "no-screen", "streams": []},                 # seen on Ubuntu 26.04 / GNOME 50
+    {"devices": 1, "restore_token": "no-mouse", "streams": [(44, {})]},
+])
+def test_a_remembered_answer_that_lost_the_screen_or_mouse_asks_again(remembered, isolated, fake_time, capsys):
+    isolated.parent.mkdir(parents=True)
+    isolated.write_text('{"restore_token": "old-token"}')
+    good = {"devices": 3, "restore_token": "fresh", "streams": [(45, {"size": (1712, 963)})]}
+    portal = FakePortal(start=[remembered, good])
+    rd = wayland.RemoteDesktop(bus=portal, state_file=isolated)
+    rd.start()
+    selects = [r.options for r in portal.requests if r.method == "SelectDevices"]
+    assert selects[0]["restore_token"] == ("s", "old-token") and "restore_token" not in selects[1]   # the dialog
+    assert [r.method for r in portal.requests].count("Start") == 2
+    assert (rd.node, rd.size, rd.active) == (45, (1712, 963), True)
+    assert json.loads(isolated.read_text()) == {"restore_token": "fresh"}
+    assert "asking again" in capsys.readouterr().err
+    rd.close()
+
+
+def test_a_remembered_answer_is_retried_only_once(isolated, fake_time):
+    isolated.parent.mkdir(parents=True)
+    isolated.write_text('{"restore_token": "old-token"}')
+    portal = FakePortal(start=[{"devices": 3, "streams": []}, {"devices": 3, "streams": []}])
+    rd = wayland.RemoteDesktop(bus=portal, state_file=isolated)
+    with pytest.raises(wayland.PortalError, match="no screen"):
+        rd.start()
+    assert [r.method for r in portal.requests].count("Start") == 2
+    assert wayland.will_ask(isolated) is True
+
+
+def test_the_closed_watcher_of_a_replaced_session_does_not_stop_the_new_one(isolated, fake_time):
+    isolated.parent.mkdir(parents=True)
+    isolated.write_text('{"restore_token": "old-token"}')
+    portal = FakePortal(start=[{"devices": 3, "streams": []}, {"devices": 3, "restore_token": "t", "streams": [(4, {})]}])
+    rd = wayland.RemoteDesktop(bus=portal, state_file=isolated)
+    first_closed = rd.closed
+    rd.start()
+    first_closed.set()                     # e.g. the first session's Closed signal arrives late
+    assert rd.active
+    rd.close()
 
 
 def test_saying_no_in_the_dialog_gets_a_helpful_message(isolated, fake_time):

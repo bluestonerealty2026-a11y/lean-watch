@@ -29,6 +29,23 @@ def adapter_settings(adapter: str | None) -> dict:
     return {k: v for k, v in info.items() if v is not None}
 
 
+def adapter_problem(adapter: str) -> str | None:
+    """Why --adapter can't be used, or None. Without its folder LeanWatch can't tell the adapter's base model, and would
+    quietly fall back to the default one."""
+    folder = Path(adapter).expanduser()
+    if not folder.is_dir():
+        if adapter.count("/") == 1 and not adapter.startswith((".", "/", "~")):     # looks like a Hugging Face repo
+            return (f"--adapter takes a folder, and there is none at {folder}. If {adapter} is a Hugging Face repo, "
+                    f"download it first: hf download {adapter} --local-dir ~/lw-runs/{adapter.split('/')[-1]}")
+        return (f"There is no adapter folder at {folder}. Point --adapter at the folder that has adapter_config.json "
+                "and leanwatch.json in it.")
+    if (folder / "adapter_config.json").exists():
+        return None
+    inner = sorted(folder.glob("*/adapter_config.json"))
+    return f"{folder} has no adapter_config.json, so it isn't an adapter folder." + (
+        f" The adapter is one folder down: --adapter {inner[0].parent}" if inner else "")
+
+
 def trained_settings(adapter: str | None, model: str | None = None) -> dict:
     """Settings saved with a fine-tuned model: from the adapter folder, else from a merged model folder."""
     if adapter:
