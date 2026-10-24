@@ -58,6 +58,21 @@ def set_image_size(processor, max_pixels: int | None = None, min_pixels: int | N
             setattr(ip, name, value)
 
 
+GPU_DTYPES = ("auto", "float16", "bfloat16", "float32")
+
+
+def cuda_dtype(choice: str = "auto"):
+    """Weight precision on an NVIDIA GPU. auto: bf16 where the GPU supports it natively (Ampere or newer), else fp16
+    (a T4 would emulate bf16 slowly). float32 is the way out when a model overflows in fp16, as Qwen2-VL can."""
+    import torch
+
+    if choice not in GPU_DTYPES:
+        raise ValueError(f"gpu dtype must be one of {', '.join(GPU_DTYPES)}")
+    if choice != "auto":
+        return getattr(torch, choice)
+    return torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+
+
 @dataclass
 class ModelAnswer:
     text: str
@@ -128,7 +143,8 @@ class LocalModel:
     """
 
     def __init__(self, model_id: str, adapter: str | None = None, device: str = "auto", load_in_4bit: bool = False,
-                 max_pixels: int | None = None, max_new_tokens: int = 512, cpu_dtype: str = "float32", status=None):
+                 max_pixels: int | None = None, max_new_tokens: int = 512, cpu_dtype: str = "float32", status=None,
+                 gpu_dtype: str = "auto"):
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -144,8 +160,7 @@ class LocalModel:
             if status:
                 status(why)
         elif cuda:
-            # bf16 only where the GPU supports it natively (Ampere or newer); a T4 would emulate it slowly.
-            kwargs["dtype"] = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+            kwargs["dtype"] = cuda_dtype(gpu_dtype)
             kwargs["device_map"] = "auto"
         else:
             kwargs["dtype"] = torch.float16

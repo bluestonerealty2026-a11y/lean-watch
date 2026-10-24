@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -57,9 +58,11 @@ def main(argv=None):
     p.add_argument("--model", default=None, help="Hugging Face id or folder (default: the adapter's base, else UI-TARS-1.5-7B)")
     p.add_argument("--adapter", default=None)
     p.add_argument("--tasks", default="actions,grounding")
-    p.add_argument("--limit", type=int, default=0, help="evaluate at most this many examples (0 = all)")
+    p.add_argument("--limit", type=int, default=0, help="evaluate at most this many examples, spread over the split (0 = all)")
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
     p.add_argument("--4bit", dest="four_bit", action="store_true")
+    p.add_argument("--gpu-dtype", default="auto", choices=["auto", "float16", "bfloat16", "float32"],
+                   help="weights on an NVIDIA GPU. auto: bf16 where native, else fp16. float32 if answers come out as '!!!!'")
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--save", type=Path, help="write per-example results as JSONL")
     a = p.parse_args(argv)
@@ -72,21 +75,25 @@ def main(argv=None):
     meta = json.loads((a.data / "meta.json").read_text())
     model_id = resolve_model_id(a.model, a.adapter)
     model = LocalModel(model_id, adapter=a.adapter, device=a.device, load_in_4bit=a.four_bit,
-                       max_pixels=meta["max_pixels"], max_new_tokens=a.max_new_tokens)
+                       max_pixels=meta["max_pixels"], max_new_tokens=a.max_new_tokens, gpu_dtype=a.gpu_dtype)
     tasks = set(a.tasks.split(","))
     rows = [json.loads(line) for line in open(a.data / f"{a.split}.jsonl")]
     rows = [r for r in rows if r["task"] in tasks]
-    if a.limit:
-        rows = rows[: a.limit]
+    if a.limit and len(rows) > a.limit:
+        # Spread the sample over the whole split: the file lists every action example before the grounding ones.
+        rows = [rows[int(i * len(rows) / a.limit)] for i in range(a.limit)]
 
     results, save = [], open(a.save, "w") if a.save else None
     for i, ex in enumerate(rows, 1):
         images = [Image.open(path).convert("RGB") for path in ex["images"]]
+        t0 = time.monotonic()
         ans = model.answer(ex["prompt"], images)
         r = score(ex, ans.text, ans.image_w, ans.image_h, meta["coords"])
+        r["seconds"] = round(time.monotonic() - t0, 2)
         results.append(r)
         if save:
-            save.write(json.dumps({**r, "answer": ans.text, "target": ex["completion"][0]["content"][0]["text"], "meta": ex["meta"]}) + "\n")
+            save.write(json.dumps({**r, "answer": ans.text, "target": ex["completion"][0]["content"][0]["text"], "meta": ex["meta"],
+                                   "image": ex["images"][-1], "image_size": [ans.image_w, ans.image_h]}) + "\n")
         if i % 20 == 0:
             print(f"{i}/{len(rows)}")
     if save:
@@ -102,6 +109,10 @@ def main(argv=None):
               + (f"   click inside target {sum(pts) / len(pts):6.1%} (of {len(pts)})" if pts else ""))
     by_action = Counter(ex["meta"].get("action", "click") for ex in rows)
     print(f"  action mix: {dict(by_action)}")
+    if results:
+        info = getattr(model, "info", {})
+        print(f"  speed: {sum(r['seconds'] for r in results) / len(results):.1f} s per answer"
+              + (f" on {info['device']} ({info['dtype']})" if info else ""))
     return results
 
 

@@ -67,21 +67,17 @@ def portable_trainer_class():
     return PortableSFTTrainer
 
 
-def native_bf16() -> bool:
-    """bf16 with real hardware support (Ampere or newer). Older GPUs like the T4 only emulate it, slowly."""
+def pick_precision(device: str, gpu_dtype: str = "auto"):
+    """(weight dtype, Trainer precision flags). On a GPU: bf16 where it is native, fp16 on older GPUs like the T4
+    (Colab's free tier), or --gpu-dtype float32 when the model overflows in fp16."""
     import torch
 
-    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
-
-
-def pick_precision(device: str):
-    import torch
+    from leanwatch.local_model import cuda_dtype
 
     if device == "cpu" or not torch.cuda.is_available():
         return torch.float32, {"use_cpu": device == "cpu" or not torch.cuda.is_available(), "bf16": False, "fp16": False}
-    if native_bf16():
-        return torch.bfloat16, {"bf16": True, "fp16": False}
-    return torch.float16, {"bf16": False, "fp16": True}   # e.g. T4 / Colab free tier
+    dtype = cuda_dtype(gpu_dtype)
+    return dtype, {"bf16": dtype == torch.bfloat16, "fp16": dtype == torch.float16}
 
 
 def main(argv=None):
@@ -100,7 +96,14 @@ def main(argv=None):
     p.add_argument("--lora-dropout", type=float, default=0.05)
     p.add_argument("--4bit", dest="four_bit", action="store_true", help="QLoRA: load the base in 4-bit (needs an NVIDIA GPU and bitsandbytes)")
     p.add_argument("--device", default="auto", choices=["auto", "cpu"])
+    p.add_argument("--gpu-dtype", default="auto", choices=["auto", "float16", "bfloat16", "float32"],
+                   help="weights on an NVIDIA GPU. auto: bf16 where native, else fp16. float32 if the loss turns into nan "
+                        "(Qwen2-VL can overflow in fp16); with --4bit it sets the compute precision")
     p.add_argument("--merge", action="store_true", help="also save base+adapter merged into --out/merged (with --4bit the merge loads a 16-bit base on the CPU: about 17 GB of RAM for a 7B model)")
+    p.add_argument("--save-steps", type=int, default=0,
+                   help="also save a checkpoint in --out every N steps (the newest 2 are kept), so --resume can carry on "
+                        "after a lost session, e.g. on Colab")
+    p.add_argument("--resume", action="store_true", help="carry on from the newest checkpoint in --out, if there is one")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--report-to", default="none", help="e.g. trackio, wandb, tensorboard")
     a = p.parse_args(argv)
@@ -122,7 +125,7 @@ def main(argv=None):
     # The processor is saved with the adapter, so the agent and evaluate.py resize the same way.
     set_image_size(processor, max_pixels=meta["max_pixels"], min_pixels=meta["min_pixels"])
 
-    dtype, precision_args = pick_precision(a.device)
+    dtype, precision_args = pick_precision(a.device, a.gpu_dtype)
     model_kwargs = {"dtype": dtype}
     if a.four_bit:
         from transformers import BitsAndBytesConfig
@@ -160,7 +163,9 @@ def main(argv=None):
         lr_scheduler_type="cosine",
         warmup_steps=max(1, int(0.03 * max(1, a.max_steps if a.max_steps > 0 else len(train) // max(1, a.batch * a.grad_accum)))),
         logging_steps=5,
-        save_strategy="epoch" if a.max_steps < 0 else "no",
+        save_strategy="steps" if a.save_steps > 0 else ("epoch" if a.max_steps < 0 else "no"),
+        save_steps=a.save_steps or 500,
+        save_total_limit=2 if a.save_steps > 0 else None,
         eval_strategy="epoch" if (val is not None and a.max_steps < 0) else "no",
         # A screenshot alone is about 1,000-2,000 tokens; TRL's default limit (1024) would cut image tokens.
         max_length=None,
@@ -175,7 +180,13 @@ def main(argv=None):
     trainer = portable_trainer_class()(model=model, args=args, train_dataset=train, eval_dataset=val,
                          processing_class=processor, peft_config=peft_config)
     trainer.model.print_trainable_parameters()
-    result = trainer.train()
+    checkpoint = None
+    if a.resume:
+        from transformers.trainer_utils import get_last_checkpoint
+
+        checkpoint = get_last_checkpoint(str(a.out)) if a.out.is_dir() else None
+        print(f"carrying on from {checkpoint}" if checkpoint else f"no checkpoint in {a.out} yet: starting from the beginning")
+    result = trainer.train(resume_from_checkpoint=checkpoint)
     trainer.save_model(str(a.out))
     processor.save_pretrained(str(a.out))
     settings = json.dumps({

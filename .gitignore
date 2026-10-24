@@ -8,3 +8,5 @@ shots/
 .DS_Store
 _site/
 data/
+runs/
+raw/

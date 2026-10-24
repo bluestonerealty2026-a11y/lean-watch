@@ -66,6 +66,20 @@ training data exactly. With `--merge`, `train_sft.py` also writes a standalone m
 16-bit copy of the base on the CPU (about 17 GB of RAM for a 7B model), because 4-bit weights can't hold
 the merged result exactly.
 
+## On a free Colab GPU
+
+[`LeanWatch_Colab.ipynb`](LeanWatch_Colab.ipynb) runs the whole loop on Google Colab's free T4. It checks the GPU,
+records practice episodes, measures UI-TARS-2B-SFT (the model an 8 GB laptop runs with `--small`), fine-tunes it
+with LoRA, measures again, draws the clicks on the screenshots, and prints a report to paste into Claude Code.
+
+[Open it in Colab](https://colab.research.google.com/github/bluestonerealty2026-a11y/lean-watch/blob/claude/bold-bell-tq6s9b/training/LeanWatch_Colab.ipynb),
+or in Colab choose *File → Open notebook → GitHub* and paste the notebook's GitHub address. Then *Runtime →
+Change runtime type → T4 GPU* and *Runtime → Run all*.
+
+Checkpoints go to Google Drive (`--save-steps`), and running it again carries on from the newest one (`--resume`).
+Qwen2-VL models can overflow in float16, the T4's fast precision, so the notebook first tries float16 on a few
+examples and switches to `--gpu-dtype float32` if the answers come out unreadable.
+
 ## Which model, for which computer
 
 | Your hardware | Run LeanWatch with | Fine-tune with |

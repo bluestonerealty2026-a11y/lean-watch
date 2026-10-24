@@ -5,6 +5,7 @@ It checks that the parts fit together, not that the tiny model learns anything u
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -151,3 +152,48 @@ def test_cli_reads_settings_from_adapter(tmp_path, monkeypatch):
     entry.main(["--model", str(merged), "--no-bubble", "--no-browser"])
     cfg = seen[-1]
     assert (cfg.local_model, cfg.style, cfg.local_max_pixels) == (str(merged), "point", 777)
+
+
+def test_checkpoints_and_resume_after_a_lost_session(tmp_path, tiny, capsys):
+    """Colab can end a session mid-run: --save-steps keeps checkpoints and --resume carries on from the newest."""
+    practice, data, run = tmp_path / "practice", tmp_path / "sft", tmp_path / "run"
+    make_practice(practice, episodes=3)
+    build_dataset.main(["--practice", str(practice), "--out", str(data), "--max-pixels", str(28 * 28 * 48),
+                        "--val-fraction", "0.34", "--seed", "1"])
+    small = ["--data", str(data), "--base", str(tiny), "--out", str(run), "--device", "cpu", "--batch", "1",
+             "--grad-accum", "1", "--lora-r", "4", "--lora-alpha", "8", "--save-steps", "1"]
+    train_sft.main(small + ["--max-steps", "2", "--resume"])
+    assert "starting from the beginning" in capsys.readouterr().out
+    assert sorted(p.name for p in run.glob("checkpoint-*")) == ["checkpoint-1", "checkpoint-2"]
+    train_sft.main(small + ["--max-steps", "3", "--resume"])
+    assert f"carrying on from {run / 'checkpoint-2'}" in capsys.readouterr().out
+    assert sorted(p.name for p in run.glob("checkpoint-*")) == ["checkpoint-2", "checkpoint-3"]   # newest 2 kept
+    state = json.loads((run / "checkpoint-3" / "trainer_state.json").read_text())
+    assert state["global_step"] == 3 and (run / "adapter_model.safetensors").exists()
+
+    saved = tmp_path / "answers.jsonl"
+    evaluate.main(["--data", str(data), "--split", "val", "--adapter", str(run), "--device", "cpu",
+                   "--max-new-tokens", "4", "--save", str(saved)])
+    assert "s per answer on cpu" in capsys.readouterr().out
+    first = json.loads(saved.read_text().splitlines()[0])
+    assert Path(first["image"]).exists() and len(first["image_size"]) == 2 and first["seconds"] >= 0
+    # --limit spreads its sample over the split, which lists every action example before the grounding ones
+    picked = evaluate.main(["--data", str(data), "--split", "val", "--adapter", str(run), "--device", "cpu",
+                            "--max-new-tokens", "2", "--limit", "4"])
+    assert len(picked) == 4 and {r["task"] for r in picked} == {"actions", "grounding"}
+
+
+@pytest.mark.parametrize("capability, choice, expected", [
+    ((7, 5), "auto", ("float16", {"bf16": False, "fp16": True})),       # T4, Colab's free GPU
+    ((7, 5), "float32", ("float32", {"bf16": False, "fp16": False})),   # the way out when fp16 overflows
+    ((8, 0), "auto", ("bfloat16", {"bf16": True, "fp16": False})),      # A100 / L4: native bf16
+])
+def test_gpu_precision(monkeypatch, capability, choice, expected):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a: capability)
+    dtype, flags = train_sft.pick_precision("auto", choice)
+    assert (str(dtype).replace("torch.", ""), flags) == expected
+    with pytest.raises(SystemExit):
+        train_sft.main(["--data", "x", "--out", "y", "--gpu-dtype", "float8"])
