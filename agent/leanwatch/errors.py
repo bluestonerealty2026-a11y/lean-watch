@@ -182,6 +182,9 @@ def known_fix(kind: str, message: str, model_id: str | None = None, cpu_dtype: s
         fix = 'pip install "numpy<2"' if np_v.split(".")[0].isdigit() and int(np_v.split(".")[0]) >= 2 \
             else "pip install --upgrade numpy"
         return f"A package here was built for a different NumPy (NumPy {np_v} is installed). Fix: {fix}", True
+    if "incompatible version of torchao" in text:
+        # PEFT checks every LoRA layer against torchao when it is installed, and refuses old versions (Colab ships one).
+        return "PEFT refuses the old torchao installed here, and LeanWatch doesn't use torchao. Fix: pip uninstall -y torchao", True
     if re.search(r"module 'lib' has no attribute '\w+'", text):
         # pyOpenSSL older than the cryptography package it runs on. accelerate reaches it through boto3
         # (when boto3 is installed), so a broken pyOpenSSL stops the model from loading.

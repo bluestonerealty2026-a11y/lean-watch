@@ -186,6 +186,16 @@ def test_old_pyopenssl_behind_accelerate():
     assert "pip install --upgrade pyopenssl" in text
 
 
+def test_old_torchao_refused_by_peft():
+    """Seen on Colab: PEFT raises while adding LoRA layers when the preinstalled torchao is too old."""
+    try:
+        raise ImportError("Found an incompatible version of torchao. Found version 0.10.0, but only versions above "
+                          "0.16.0 are supported")
+    except ImportError as e:
+        text = errors.explain_load_error(e, "org/fake-2B")
+    assert "pip uninstall -y torchao" in text
+
+
 def test_pyo3_reinit_is_explained_as_a_follow_on_error():
     fix, install = errors.known_fix("ImportError", "PyO3 modules compiled for CPython 3.8 or older may only be "
                                                    "initialized once per interpreter process")
