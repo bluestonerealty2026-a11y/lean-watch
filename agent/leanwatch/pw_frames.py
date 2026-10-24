@@ -19,6 +19,11 @@ import time
 
 
 def main() -> int:
+    import signal
+
+    # Ctrl+C in LeanWatch's terminal reaches this helper too. LeanWatch ends it (its stdin closes), so a Ctrl+C
+    # here would only print a confusing traceback.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     import gi
 
     gi.require_version("Gst", "1.0")

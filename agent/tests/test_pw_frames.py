@@ -168,6 +168,18 @@ def test_a_frame_from_the_real_helper(real_helper):
     assert frames.proc.returncode == 0
 
 
+def test_ctrl_c_in_the_terminal_leaves_the_helper_to_leanwatch(real_helper):
+    import signal
+
+    frames = real_helper("one-frame")
+    first_frame(frames)
+    os.kill(frames.proc.pid, signal.SIGINT)        # what the terminal sends every process of LeanWatch
+    time.sleep(0.2)
+    assert frames.proc.poll() is None and frames.grab().size == (3, 2)
+    frames.close()
+    assert frames.proc.returncode == 0
+
+
 def test_since_waits_then_sends_the_newest_frame(real_helper):
     frames = real_helper("one-frame")
     first_frame(frames)
