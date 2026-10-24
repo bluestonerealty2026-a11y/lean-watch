@@ -51,6 +51,23 @@ def score(example: dict, answer_text: str, model_w: int, model_h: int, coords: s
     return out
 
 
+def spread(rows: list, n: int) -> list:
+    """n rows evenly spaced over the list (the split lists examples episode by episode)."""
+    return rows if len(rows) <= n else [rows[int(i * len(rows) / n)] for i in range(n)]
+
+
+def sample(rows: list, limit: int) -> list:
+    """At most `limit` rows, shared equally between the tasks (a split has about three grounding examples for every
+    action step, so a plain cut would measure actions on too few examples), each spread over the split."""
+    groups = sorted(([r for r in rows if r["task"] == t] for t in dict.fromkeys(r["task"] for r in rows)), key=len)
+    picked, left = [], limit
+    for k, group in enumerate(groups):          # smallest first: what it can't use goes to the bigger ones
+        take = spread(group, left // (len(groups) - k))
+        picked += take
+        left -= len(take)
+    return picked
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", type=Path, required=True)
@@ -58,7 +75,7 @@ def main(argv=None):
     p.add_argument("--model", default=None, help="Hugging Face id or folder (default: the adapter's base, else UI-TARS-1.5-7B)")
     p.add_argument("--adapter", default=None)
     p.add_argument("--tasks", default="actions,grounding")
-    p.add_argument("--limit", type=int, default=0, help="evaluate at most this many examples, spread over the split (0 = all)")
+    p.add_argument("--limit", type=int, default=0, help="evaluate at most this many examples, shared equally between the tasks (0 = all)")
     p.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
     p.add_argument("--4bit", dest="four_bit", action="store_true")
     p.add_argument("--gpu-dtype", default="auto", choices=["auto", "float16", "bfloat16", "float32"],
@@ -80,8 +97,7 @@ def main(argv=None):
     rows = [json.loads(line) for line in open(a.data / f"{a.split}.jsonl")]
     rows = [r for r in rows if r["task"] in tasks]
     if a.limit and len(rows) > a.limit:
-        # Spread the sample over the whole split: the file lists every action example before the grounding ones.
-        rows = [rows[int(i * len(rows) / a.limit)] for i in range(a.limit)]
+        rows = sample(rows, a.limit)
 
     results, save = [], open(a.save, "w") if a.save else None
     for i, ex in enumerate(rows, 1):

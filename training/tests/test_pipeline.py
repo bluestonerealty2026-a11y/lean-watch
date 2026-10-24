@@ -180,7 +180,16 @@ def test_checkpoints_and_resume_after_a_lost_session(tmp_path, tiny, capsys):
     # --limit spreads its sample over the split, which lists every action example before the grounding ones
     picked = evaluate.main(["--data", str(data), "--split", "val", "--adapter", str(run), "--device", "cpu",
                             "--max-new-tokens", "2", "--limit", "4"])
-    assert len(picked) == 4 and {r["task"] for r in picked} == {"actions", "grounding"}
+    assert sorted(r["task"] for r in picked) == ["actions", "actions", "grounding", "grounding"]
+
+
+def test_limit_shares_the_sample_between_tasks():
+    rows = [{"task": "actions", "i": i} for i in range(104)] + [{"task": "grounding", "i": i} for i in range(298)]
+    picked = evaluate.sample(rows, 100)
+    assert [r["task"] for r in picked].count("actions") == 50 and len(picked) == 100
+    assert picked[0]["i"] == 0 and picked[49]["i"] > 90        # spread over the whole split, not the first 50
+    few = [{"task": "actions", "i": i} for i in range(3)] + [{"task": "grounding", "i": i} for i in range(298)]
+    assert [r["task"] for r in evaluate.sample(few, 100)].count("grounding") == 97   # leftovers go to the bigger task
 
 
 @pytest.mark.parametrize("capability, choice, expected", [
